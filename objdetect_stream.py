@@ -14,29 +14,13 @@ from picamera2.devices import IMX500
 from picamera2.devices.imx500 import NetworkIntrinsics
 
 # ── Config ────────────────────────────────────────────────────────────────────
-WS_PORT              = 8080   # WebSocket frames
-HTTP_PORT            = 8081   # HTML viewer page
+WS_PORT              = 8080
+HTTP_PORT            = 8081
 CONFIDENCE_THRESHOLD = 0.20
-MIN_CONSECUTIVE      = 2        # lower = less filtering; set to 1 to disable
-KEY_BUCKET_DIVISOR   = 6        # coarser grid tolerates ~15% position drift
-MODEL_PATH           = "/usr/share/imx500-models/imx500_network_yolo11n_pp.rpk"
-ALLOWED_LABELS       = {"person", "bicycle", "car", "motorbike", "bus", "truck", "dog", "cat"}
-
-COCO_LABELS = [
-    "person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train",
-    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
-    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep",
-    "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
-    "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard",
-    "sports ball", "kite", "baseball bat", "baseball glove", "skateboard",
-    "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork",
-    "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
-    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
-    "sofa", "pottedplant", "bed", "diningtable", "toilet", "tvmonitor",
-    "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave",
-    "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
-    "scissors", "teddy bear", "hair drier", "toothbrush"
-]
+MIN_CONSECUTIVE      = 1
+KEY_BUCKET_DIVISOR   = 6
+MODEL_PATH           = "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
+ALLOWED_LABELS       = {"person", "bicycle", "car", "motorcycle", "bus", "truck", "dog", "cat"}
 
 # ── Shared frame buffer ───────────────────────────────────────────────────────
 latest_jpeg      = None
@@ -53,27 +37,19 @@ def get_frame():
 
 # ── Detection stability filter ────────────────────────────────────────────────
 detection_history = {}
+last_metadata     = None
 
-def draw_and_encode(frame, outputs):
+def draw_and_encode(frame, detections):
     global detection_history
     h, w = frame.shape[:2]
 
     current_detections = {}
 
-    if outputs is not None:
-        boxes, scores, classes, _ = outputs
-        for i in range(len(scores)):
-            score = float(scores[i])
-            if score < CONFIDENCE_THRESHOLD:
-                continue
-            class_id = int(classes[i])
-            label    = COCO_LABELS[class_id] if class_id < len(COCO_LABELS) else f"cls{class_id}"
-            if label not in ALLOWED_LABELS:
-                continue
-            y0, x0, y1, x1 = boxes[i]
-            key = f"{label}_{int(x0 * KEY_BUCKET_DIVISOR)}_{int(y0 * KEY_BUCKET_DIVISOR)}"
-            if key not in current_detections or score > current_detections[key][1]:
-                current_detections[key] = (label, score, boxes[i])
+    for box, label, score in detections:
+        x, y, bw, bh = box  # convert_inference_coords returns (x, y, w, h) in ISP pixels
+        key = f"{label}_{int(x / KEY_BUCKET_DIVISOR)}_{int(y / KEY_BUCKET_DIVISOR)}"
+        if key not in current_detections or score > current_detections[key][2]:
+            current_detections[key] = (box, label, score)
 
     new_history = {}
     for key in current_detections:
@@ -85,24 +61,22 @@ def draw_and_encode(frame, outputs):
             continue
         if key not in current_detections:
             continue
-        label, score, box = current_detections[key]
-        y0, x0, y1, x1 = box
-        pt1 = (int(x0 * w), int(y0 * h))
-        pt2 = (int(x1 * w), int(y1 * h))
+        box, label, score = current_detections[key]
+        x, y, bw, bh = box
+        pt1 = (x, y)
+        pt2 = (x + bw, y + bh)
         cv2.rectangle(frame, pt1, pt2, (0, 255, 0), 2)
         cv2.putText(frame, f"{label} {score:.0%}",
-                    (pt1[0], max(pt1[1] - 8, 0)),
+                    (x, max(y - 8, 0)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
+    frame = cv2.rotate(frame, cv2.ROTATE_180)
     bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 75])
     if ok:
         set_frame(buf.tobytes())
 
-# ── HTML viewer (plain HTTP on port 8081) ─────────────────────────────────────
-# Kept separate from the WebSocket port to avoid process_request compatibility
-# issues across websockets library versions on Pi OS.
-
+# ── HTML viewer ───────────────────────────────────────────────────────────────
 def make_html(local_ip):
     return f"""<!DOCTYPE html>
 <html>
@@ -175,12 +149,11 @@ def run_http_server(local_ip):
     server = HTTPServer(("0.0.0.0", HTTP_PORT), PageHandler)
     server.serve_forever()
 
-# ── WebSocket server (port 8080) ──────────────────────────────────────────────
+# ── WebSocket server ──────────────────────────────────────────────────────────
 CLIENTS      = set()
 CLIENTS_LOCK = asyncio.Lock()
 
 async def serve_client(websocket, *args):
-    """Register client; compatible with websockets legacy and modern call signatures."""
     async with CLIENTS_LOCK:
         CLIENTS.add(websocket)
     try:
@@ -190,7 +163,6 @@ async def serve_client(websocket, *args):
             CLIENTS.discard(websocket)
 
 async def broadcast_frames():
-    """Push the latest JPEG to every connected client at ~30 fps."""
     while True:
         jpeg = get_frame()
         if jpeg and CLIENTS:
@@ -214,28 +186,47 @@ def start_ws_thread():
     asyncio.run(run_ws_server())
 
 # ── Camera / inference ────────────────────────────────────────────────────────
-imx500 = None
-picam2 = None
+imx500   = None
+picam2   = None
+intrinsics = None
 
 def pre_callback(request):
     frame    = request.make_array("main")
     metadata = request.get_metadata()
-    outputs  = imx500.get_outputs(metadata)
-    draw_and_encode(frame, outputs)
+
+    detections = []
+    np_outputs = imx500.get_outputs(metadata, add_batch=True)
+    if np_outputs is not None:
+        labels  = intrinsics.labels
+        boxes   = np_outputs[0][0]
+        scores  = np_outputs[1][0]
+        classes = np_outputs[2][0]
+        for box, score, class_id in zip(boxes, scores, classes):
+            if score < CONFIDENCE_THRESHOLD:
+                continue
+            label = labels[int(class_id)] if int(class_id) < len(labels) else f"cls{int(class_id)}"
+            if label not in ALLOWED_LABELS:
+                continue
+            # convert_inference_coords returns (x, y, w, h) scaled to the ISP output frame
+            coords = imx500.convert_inference_coords(box, metadata, picam2)
+            detections.append((coords, label, float(score)))
+
+    draw_and_encode(frame, detections)
 
 def run_camera():
-    global imx500, picam2
+    global imx500, picam2, intrinsics
 
     imx500     = IMX500(MODEL_PATH)
     intrinsics = imx500.network_intrinsics or NetworkIntrinsics()
     intrinsics.update_with_defaults()
 
+    print(f"Model:              {MODEL_PATH}")
     print(f"Model inference rate: {intrinsics.inference_rate}")
 
     picam2 = Picamera2(imx500.camera_num)
     config = picam2.create_preview_configuration(
         main={"size": (1280, 720)},
-        controls={"FrameRate": 15},
+        controls={"FrameRate": 30},
         buffer_count=6
     )
     picam2.pre_callback = pre_callback
@@ -253,17 +244,14 @@ def run_camera():
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Get local IP once at startup so both servers can use it
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.connect(("8.8.8.8", 80))
     local_ip = s.getsockname()[0]
     s.close()
 
-    # HTML viewer page
     t_http = threading.Thread(target=run_http_server, args=(local_ip,), daemon=True)
     t_http.start()
 
-    # WebSocket frame broadcaster
     t_ws = threading.Thread(target=start_ws_thread, daemon=True)
     t_ws.start()
 
