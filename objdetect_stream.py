@@ -21,7 +21,7 @@ HTTP_PORT            = 8081   # HTML viewer page
 CONFIDENCE_THRESHOLD = 0.20
 MIN_CONSECUTIVE      = 2        # lower = less filtering; set to 1 to disable
 KEY_BUCKET_DIVISOR   = 6        # coarser grid tolerates ~15% position drift
-MODEL_PATH           = "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
+MODEL_PATH           = "/usr/share/imx500-models/imx500_network_yolo11n_pp.rpk"
 ALLOWED_LABELS       = {"person", "bicycle", "car", "motorbike", "bus", "truck", "dog", "cat"}
 
 COCO_LABELS = [
