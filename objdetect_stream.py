@@ -1,5 +1,3 @@
-#testing
-
 import os
 os.environ["LIBCAMERA_LOG_LEVELS"] = "3"
 
