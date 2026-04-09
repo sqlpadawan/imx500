@@ -16,9 +16,9 @@ from picamera2.devices.imx500 import NetworkIntrinsics
 # ── Config ────────────────────────────────────────────────────────────────────
 WS_PORT              = 8080
 HTTP_PORT            = 8081
-CONFIDENCE_THRESHOLD = 0.20
+CONFIDENCE_THRESHOLD = 0.10
 MIN_CONSECUTIVE      = 1
-KEY_BUCKET_DIVISOR   = 6
+KEY_BUCKET_DIVISOR   = 20
 MODEL_PATH           = "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
 ALLOWED_LABELS       = {"person", "bicycle", "car", "motorcycle", "bus", "truck", "dog", "cat"}
 
