@@ -8,6 +8,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import cv2
 import numpy as np
+import libcamera
 import websockets
 from picamera2 import Picamera2
 from picamera2.devices import IMX500
@@ -16,11 +17,16 @@ from picamera2.devices.imx500 import NetworkIntrinsics
 # ── Config ────────────────────────────────────────────────────────────────────
 WS_PORT              = 8080
 HTTP_PORT            = 8081
-CONFIDENCE_THRESHOLD = 0.10
+CONFIDENCE_THRESHOLD = 0.15
 MIN_CONSECUTIVE      = 1
-KEY_BUCKET_DIVISOR   = 20
+KEY_BUCKET_DIVISOR   = 50
 MODEL_PATH           = "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
-ALLOWED_LABELS       = {"person", "bicycle", "car", "motorcycle", "bus", "truck", "dog", "cat"}
+
+# Vehicle-class labels collapsed to a single display label
+VEHICLE_LABELS = {"car", "truck", "bus", "motorcycle", "train"}
+
+# Other labels we care about
+OTHER_LABELS   = {"person", "bicycle", "dog", "cat"}
 
 # ── Shared frame buffer ───────────────────────────────────────────────────────
 latest_jpeg      = None
@@ -37,7 +43,6 @@ def get_frame():
 
 # ── Detection stability filter ────────────────────────────────────────────────
 detection_history = {}
-last_metadata     = None
 
 def draw_and_encode(frame, detections):
     global detection_history
@@ -46,7 +51,7 @@ def draw_and_encode(frame, detections):
     current_detections = {}
 
     for box, label, score in detections:
-        x, y, bw, bh = box  # convert_inference_coords returns (x, y, w, h) in ISP pixels
+        x, y, bw, bh = box
         key = f"{label}_{int(x / KEY_BUCKET_DIVISOR)}_{int(y / KEY_BUCKET_DIVISOR)}"
         if key not in current_detections or score > current_detections[key][2]:
             current_detections[key] = (box, label, score)
@@ -65,12 +70,16 @@ def draw_and_encode(frame, detections):
         x, y, bw, bh = box
         pt1 = (x, y)
         pt2 = (x + bw, y + bh)
-        cv2.rectangle(frame, pt1, pt2, (0, 255, 0), 2)
+
+        # Green for vehicles, blue for people/animals
+        color = (0, 255, 0) if label == "vehicle" else (255, 128, 0)
+
+        cv2.rectangle(frame, pt1, pt2, color, 2)
         cv2.putText(frame, f"{label} {score:.0%}",
                     (x, max(y - 8, 0)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-    frame = cv2.rotate(frame, cv2.ROTATE_180)
+    # Rotation is now handled at ISP level — no software rotate needed
     bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 75])
     if ok:
@@ -186,8 +195,8 @@ def start_ws_thread():
     asyncio.run(run_ws_server())
 
 # ── Camera / inference ────────────────────────────────────────────────────────
-imx500   = None
-picam2   = None
+imx500     = None
+picam2     = None
 intrinsics = None
 
 def pre_callback(request):
@@ -204,12 +213,17 @@ def pre_callback(request):
         for box, score, class_id in zip(boxes, scores, classes):
             if score < CONFIDENCE_THRESHOLD:
                 continue
-            label = labels[int(class_id)] if int(class_id) < len(labels) else f"cls{int(class_id)}"
-            if label not in ALLOWED_LABELS:
-                continue
-            # convert_inference_coords returns (x, y, w, h) scaled to the ISP output frame
+            raw_label = labels[int(class_id)] if int(class_id) < len(labels) else f"cls{int(class_id)}"
+
+            if raw_label in VEHICLE_LABELS:
+                display_label = "vehicle"
+            elif raw_label in OTHER_LABELS:
+                display_label = raw_label
+            else:
+                continue  # drop airplane, boat, bed, toilet, etc.
+
             coords = imx500.convert_inference_coords(box, metadata, picam2)
-            detections.append((coords, label, float(score)))
+            detections.append((coords, display_label, float(score)))
 
     draw_and_encode(frame, detections)
 
@@ -220,12 +234,16 @@ def run_camera():
     intrinsics = imx500.network_intrinsics or NetworkIntrinsics()
     intrinsics.update_with_defaults()
 
-    print(f"Model:              {MODEL_PATH}")
+    print(f"Model:                {MODEL_PATH}")
     print(f"Model inference rate: {intrinsics.inference_rate}")
+    print(f"Labels count:         {len(intrinsics.labels)}")
+    print(f"First 10 labels:      {intrinsics.labels[:10]}")
 
     picam2 = Picamera2(imx500.camera_num)
     config = picam2.create_preview_configuration(
         main={"size": (1280, 720)},
+        ##transform=libcamera.Transform(rotation=180),  # rotate at ISP level so inference sees correct orientation
+        ##transform=libcamera.Transform(rotation=180),  # rotate at ISP level so inference sees correct orientation
         controls={"FrameRate": 30},
         buffer_count=6
     )
