@@ -17,7 +17,7 @@ from picamera2.devices.imx500 import NetworkIntrinsics
 # ── Config ────────────────────────────────────────────────────────────────────
 WS_PORT              = 8080
 HTTP_PORT            = 8081
-CONFIDENCE_THRESHOLD = 0.15
+CONFIDENCE_THRESHOLD = 0.20
 MIN_CONSECUTIVE      = 1
 KEY_BUCKET_DIVISOR   = 50
 MODEL_PATH           = "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
