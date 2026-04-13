@@ -307,7 +307,7 @@ if __name__ == "__main__":
     print(f"WebSocket:    ws://{local_ip}:{WS_PORT}/")
 
     picam2 = Picamera2(imx500.camera_num)
-    config = picam2.create_preview_configuration(controls={"FrameRate": intrinsics.inference_rate}, buffer_count=12)
+    config = picam2.create_preview_configuration(controls={"FrameRate": intrinsics.inference_rate, "AwbMode": 5}, buffer_count=12)
 
     imx500.show_network_fw_progress_bar()
     picam2.start(config, show_preview=False)  # headless — no display needed
