@@ -74,7 +74,7 @@ lng = config["location"]["longitude"]
 local_tz = ZoneInfo("localtime")
 
 location = LocationInfo(latitude=lat, longitude=lng)
-s = sun(location.observer, date=date.today(tz=local_tz), tzinfo=local_tz)
+s = sun(location.observer, date=date.today(), tzinfo=local_tz)
 
 print(int(s["sunrise"].timestamp()), int(s["sunset"].timestamp()))
 PYEOF
