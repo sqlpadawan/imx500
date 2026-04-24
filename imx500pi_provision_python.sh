@@ -59,7 +59,9 @@ readonly DEFAULT_APT_PACKAGES=(
 # pip packages installed into the venv
 readonly DEFAULT_REQUIREMENTS=(
     "opencv-python-headless"   # OpenCV without Qt/display deps (headless Pi)
-    "websockets"               # WebSocket server for live stream (imx500_demo.py)
+    "websockets"               # WebSocket server for live stream (imx500_capture_log.py)
+    "astral"                   # Sunrise/sunset calculation for daylight-only operation
+    "pgeocode"                 # Offline zip code to lat/long resolution (no API key needed)
 )
 
 ### Variables
@@ -432,6 +434,24 @@ verify_packages() {
         return 1
     fi
 
+    # Verify astral
+    log "INFO" "Checking astral..."
+    if sudo -u "$ACTUAL_USER" bash -c "source '$VENV_DIR/bin/activate' && python3 -c 'import astral; print(\"astral version:\", astral.__version__)'" 2>&1 | tee -a "$LOG_FILE"; then
+        log "INFO" "astral verified"
+    else
+        log "ERROR" "astral not importable"
+        return 1
+    fi
+
+    # Verify pgeocode
+    log "INFO" "Checking pgeocode..."
+    if sudo -u "$ACTUAL_USER" bash -c "source '$VENV_DIR/bin/activate' && python3 -c 'import pgeocode; print(\"pgeocode version:\", pgeocode.__version__)'" 2>&1 | tee -a "$LOG_FILE"; then
+        log "INFO" "pgeocode verified"
+    else
+        log "ERROR" "pgeocode not importable"
+        return 1
+    fi
+
     # List all installed packages
     log "INFO" "Installed packages:"
     sudo -u "$ACTUAL_USER" bash -c "source '$VENV_DIR/bin/activate' && python3 -m pip list" 2>&1 | tee -a "$LOG_FILE"
@@ -565,4 +585,4 @@ log "INFO" "  source $VENV_DIR/bin/activate"
 log "INFO" ""
 log "INFO" "To verify the installation:"
 log "INFO" "  source $VENV_DIR/bin/activate"
-log "INFO" "  python3 -c 'import picamera2, cv2, websockets; print(\"All imports OK\")'"
+log "INFO" "  python3 -c 'import picamera2, cv2, websockets, astral, pgeocode; print(\"All imports OK\")'"
