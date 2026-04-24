@@ -123,21 +123,18 @@ CAPTURE_PID=$!
 
 log "INFO" "Capture PID: ${CAPTURE_PID}"
 
-# Wait for sunset or for the capture script to exit on its own
-if wait_result=$(sleep "$RUN_S" & SLEEP_PID=$!
-    wait -n $CAPTURE_PID $SLEEP_PID 2>/dev/null
-    echo $?); then
-    # Check if capture script is still running (sleep expired = sunset reached)
-    if kill -0 "$CAPTURE_PID" 2>/dev/null; then
-        log "INFO" "Sunset reached — stopping capture"
-        kill -TERM "$CAPTURE_PID" 2>/dev/null || true
-        # Give it a moment to shut down cleanly
-        sleep 3
-        kill -KILL "$CAPTURE_PID" 2>/dev/null || true
-        log "INFO" "Capture stopped at sunset"
-    else
-        log "WARN" "Capture script exited before sunset"
-    fi
+# Sleep until sunset, then stop the capture script.
+# If the capture script dies before sunset, the sleep finishes and we exit cleanly.
+sleep "$RUN_S"
+
+if kill -0 "$CAPTURE_PID" 2>/dev/null; then
+    log "INFO" "Sunset reached — stopping capture"
+    kill -TERM "$CAPTURE_PID" 2>/dev/null || true
+    sleep 3
+    kill -KILL "$CAPTURE_PID" 2>/dev/null || true
+    log "INFO" "Capture stopped at sunset"
+else
+    log "WARN" "Capture script exited before sunset"
 fi
 
 log "INFO" "Wrapper exiting cleanly"
