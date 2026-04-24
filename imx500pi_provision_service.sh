@@ -91,6 +91,18 @@ if ! id "$ACTUAL_USER" &>/dev/null; then
     exit 1
 fi
 
+### Helper — run systemctl --user as the actual user from a sudo context
+# systemctl --user requires XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS,
+# which are not available in a sudo shell. This helper sets them explicitly.
+run_user_systemctl() {
+    local uid
+    uid=$(id -u "$ACTUAL_USER")
+    sudo -u "$ACTUAL_USER" \
+        XDG_RUNTIME_DIR="/run/user/${uid}" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
+        systemctl --user "$@"
+}
+
 ### Derived paths
 REPO_DIR="${ACTUAL_HOME}/imx500"
 VENV_PYTHON="${ACTUAL_HOME}/imx500_venv/bin/python3"
@@ -152,10 +164,10 @@ check_existing_provision() {
 
     # Service and timer runtime status
     local svc_enabled svc_active timer_enabled timer_active
-    svc_enabled=$(sudo  -u "$ACTUAL_USER" systemctl --user is-enabled imx500_capture.service 2>/dev/null || echo "not-found")
-    svc_active=$(sudo   -u "$ACTUAL_USER" systemctl --user is-active  imx500_capture.service 2>/dev/null || echo "inactive")
-    timer_enabled=$(sudo -u "$ACTUAL_USER" systemctl --user is-enabled imx500_capture.timer  2>/dev/null || echo "not-found")
-    timer_active=$(sudo  -u "$ACTUAL_USER" systemctl --user is-active  imx500_capture.timer  2>/dev/null || echo "inactive")
+    svc_enabled=$(run_user_systemctl is-enabled imx500_capture.service 2>/dev/null || echo "not-found")
+    svc_active=$(run_user_systemctl is-active  imx500_capture.service 2>/dev/null || echo "inactive")
+    timer_enabled=$(run_user_systemctl is-enabled imx500_capture.timer  2>/dev/null || echo "not-found")
+    timer_active=$(run_user_systemctl is-active  imx500_capture.timer  2>/dev/null || echo "inactive")
 
     log "INFO" "  [INFO]    Service: enabled=$svc_enabled  active=$svc_active"
     log "INFO" "  [INFO]    Timer:   enabled=$timer_enabled  active=$timer_active"
@@ -219,12 +231,12 @@ if [[ "$RESET_MODE" == true ]]; then
     log "INFO" "Reset mode — removing existing config and service files..."
 
     # Stop and disable service/timer if running
-    if sudo -u "$ACTUAL_USER" systemctl --user is-active imx500_capture.service &>/dev/null; then
-        sudo -u "$ACTUAL_USER" systemctl --user stop imx500_capture.service || true
+    if run_user_systemctl is-active imx500_capture.service &>/dev/null; then
+        run_user_systemctl stop imx500_capture.service || true
         log "INFO" "Service stopped"
     fi
-    if sudo -u "$ACTUAL_USER" systemctl --user is-enabled imx500_capture.timer &>/dev/null; then
-        sudo -u "$ACTUAL_USER" systemctl --user disable imx500_capture.timer || true
+    if run_user_systemctl is-enabled imx500_capture.timer &>/dev/null; then
+        run_user_systemctl disable imx500_capture.timer || true
         log "INFO" "Timer disabled"
     fi
 
@@ -340,8 +352,8 @@ fi
 ################################################################################
 log "INFO" "Stopping service before rewriting unit files..."
 
-if sudo -u "$ACTUAL_USER" systemctl --user is-active imx500_capture.service &>/dev/null; then
-    sudo -u "$ACTUAL_USER" systemctl --user stop imx500_capture.service 2>&1 | tee -a "$LOG_FILE" || true
+if run_user_systemctl is-active imx500_capture.service &>/dev/null; then
+    run_user_systemctl stop imx500_capture.service 2>&1 | tee -a "$LOG_FILE" || true
     log "INFO" "Service stopped"
 else
     log "INFO" "Service was not running — nothing to stop"
@@ -411,11 +423,11 @@ log "INFO" "Timer unit written: $TIMER_FILE"
 ### 9. Enable and Start Service and Timer
 ################################################################################
 log "INFO" "Reloading systemd user daemon..."
-sudo -u "$ACTUAL_USER" systemctl --user daemon-reload
+run_user_systemctl daemon-reload
 log "INFO" "Daemon reloaded"
 
 log "INFO" "Enabling imx500_capture.service..."
-if sudo -u "$ACTUAL_USER" systemctl --user enable imx500_capture.service 2>&1 | tee -a "$LOG_FILE"; then
+if run_user_systemctl enable imx500_capture.service 2>&1 | tee -a "$LOG_FILE"; then
     log "INFO" "Service enabled"
 else
     log "ERROR" "Failed to enable service"
@@ -423,7 +435,7 @@ else
 fi
 
 log "INFO" "Enabling imx500_capture.timer..."
-if sudo -u "$ACTUAL_USER" systemctl --user enable imx500_capture.timer 2>&1 | tee -a "$LOG_FILE"; then
+if run_user_systemctl enable imx500_capture.timer 2>&1 | tee -a "$LOG_FILE"; then
     log "INFO" "Timer enabled"
 else
     log "ERROR" "Failed to enable timer"
@@ -431,7 +443,7 @@ else
 fi
 
 log "INFO" "Starting imx500_capture.timer..."
-if sudo -u "$ACTUAL_USER" systemctl --user start imx500_capture.timer 2>&1 | tee -a "$LOG_FILE"; then
+if run_user_systemctl start imx500_capture.timer 2>&1 | tee -a "$LOG_FILE"; then
     log "INFO" "Timer started"
 else
     log "ERROR" "Failed to start timer"
@@ -439,7 +451,7 @@ else
 fi
 
 log "INFO" "Starting imx500_capture.service..."
-if sudo -u "$ACTUAL_USER" systemctl --user start imx500_capture.service 2>&1 | tee -a "$LOG_FILE"; then
+if run_user_systemctl start imx500_capture.service 2>&1 | tee -a "$LOG_FILE"; then
     log "INFO" "Service started"
 else
     log "ERROR" "Failed to start service"
@@ -453,8 +465,8 @@ log "INFO" "Verifying service and timer status..."
 
 sleep 3  # Give systemd a moment to settle
 
-SERVICE_STATUS=$(sudo -u "$ACTUAL_USER" systemctl --user is-active imx500_capture.service 2>/dev/null || true)
-TIMER_STATUS=$(sudo -u "$ACTUAL_USER"  systemctl --user is-active imx500_capture.timer  2>/dev/null || true)
+SERVICE_STATUS=$(run_user_systemctl is-active imx500_capture.service 2>/dev/null || true)
+TIMER_STATUS=$(run_user_systemctl is-active imx500_capture.timer  2>/dev/null || true)
 
 log "INFO" "Service status: $SERVICE_STATUS"
 log "INFO" "Timer status:   $TIMER_STATUS"
