@@ -53,17 +53,14 @@ log "INFO" "Calculating sunrise/sunset from config.json..."
 
 read -r SUNRISE_EPOCH SUNSET_EPOCH < <(
     "$VENV_PYTHON" - <<'PYEOF'
-import json, sys, time
+import json, os, sys
 from pathlib import Path
 from astral import LocationInfo
 from astral.sun import sun
-from datetime import date, timezone
-
-config_path = Path(__file__).parent / "config.json" if False else \
-    Path(sys.argv[0]).parent / "config.json"
+from datetime import date
+from zoneinfo import ZoneInfo
 
 # Find config.json relative to this script's real location
-import os
 script_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
 config_path = Path(script_dir) / "config.json"
 
@@ -73,8 +70,11 @@ with open(config_path) as f:
 lat = config["location"]["latitude"]
 lng = config["location"]["longitude"]
 
+# Use the system local timezone so today's date and times are correct locally
+local_tz = ZoneInfo("localtime")
+
 location = LocationInfo(latitude=lat, longitude=lng)
-s = sun(location.observer, date=date.today(), tzinfo=timezone.utc)
+s = sun(location.observer, date=date.today(tz=local_tz), tzinfo=local_tz)
 
 print(int(s["sunrise"].timestamp()), int(s["sunset"].timestamp()))
 PYEOF
