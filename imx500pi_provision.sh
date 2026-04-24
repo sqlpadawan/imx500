@@ -242,7 +242,7 @@ readonly REQUIRED_PKGS=(
     rpi-connect-lite
     i2c-tools          # I2C device inspection (i2cdetect)
     v4l-utils          # Camera device inspection (v4l2-ctl)
-    libcamera-tools    # rpicam-hello / rpicam-still for camera verification
+    python3-libcamera  # Headless-safe libcamera Python bindings (no display deps)
 )
 
 install_package() {
@@ -453,7 +453,7 @@ log "INFO" "Log file: $LOG_FILE"
 log "INFO" "Config backup: $BACKUP_FILE"
 log "INFO" "========================================="
 log "INFO" "Next steps after reboot:"
-log "INFO" "  1. Verify camera: rpicam-hello --list-cameras"
+log "INFO" "  1. Verify camera: python3 -c 'import libcamera; print(libcamera.__version__)'"
 log "INFO" "  2. Run Python provisioning script"
 log "INFO" "  3. Start RPI Connect: rpi-connect on && rpi-connect signin"
 log "INFO" "========================================="
