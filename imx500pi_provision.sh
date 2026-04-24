@@ -239,7 +239,6 @@ log "INFO" "Installing required base packages..."
 
 # Base packages only — Python/picamera2/imx500 packages handled separately
 readonly REQUIRED_PKGS=(
-    git
     rpi-connect-lite
     i2c-tools          # I2C device inspection (i2cdetect)
     v4l-utils          # Camera device inspection (v4l2-ctl)
