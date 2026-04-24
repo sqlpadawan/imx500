@@ -238,10 +238,12 @@ fi
 log "INFO" "Installing required base packages..."
 
 # Base packages only — Python/picamera2/imx500 packages handled separately
+# NOTE: libcamera-v4l2 must NOT be installed — its V4L2 compatibility shim
+# claims the unicam device at boot and prevents picamera2 from acquiring it.
+# NOTE: v4l-utils is excluded for the same reason — pulls in libcamera-v4l2.
 readonly REQUIRED_PKGS=(
     rpi-connect-lite
     i2c-tools          # I2C device inspection (i2cdetect)
-    v4l-utils          # Camera device inspection (v4l2-ctl)
     python3-libcamera  # Headless-safe libcamera Python bindings (no display deps)
 )
 
@@ -349,8 +351,10 @@ add_or_update_config() {
     fi
 }
 
-# Reduce GPU memory — headless, no display needed
-add_or_update_config "gpu_mem" "16"
+# GPU memory — 128MB required for IMX500 camera stack (VCHI/ISP initialization)
+# NOTE: 16MB is too low — causes "Failed to open VCHI service connection" at boot
+# which prevents libcamera and picamera2 from seeing the camera entirely.
+add_or_update_config "gpu_mem" "128"
 
 # Disable Bluetooth to save power
 if ! grep -q "^dtoverlay=disable-bt" "$CONFIG_FILE"; then
@@ -446,7 +450,7 @@ log "INFO" "Video Group: $USERNAME added"
 log "INFO" "WiFi Power Saving: Disabled"
 log "INFO" "Base Packages: Installed"
 log "INFO" "User Lingering: Enabled"
-log "INFO" "Boot Config: Optimized for headless"
+log "INFO" "Boot Config: Optimized for headless (gpu_mem=128)"
 log "INFO" "Log Directory: $LOG_DIR (owned by $USERNAME)"
 log "INFO" "Log Rotation: Configured"
 log "INFO" "Log file: $LOG_FILE"
