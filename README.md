@@ -134,6 +134,85 @@ each `systemctl --user` call with `XDG_RUNTIME_DIR=/run/user/$(id -u)`.
 | Event log | `tail -f /var/log/imx500/events.jsonl` |
 | Wrapper log | `tail -f /var/log/imx500/wrapper.log` |
 
+### Daylight-Only Operation
+
+The capture service runs only between sunrise and sunset. This is handled
+automatically using your location's coordinates stored in `config.json`.
+
+#### How it works
+
+During `imx500pi_provision_service.sh`, you are prompted for a US zip code.
+The script resolves this offline using the `pgeocode` library (no API key or
+internet connection required at runtime) and writes the resolved coordinates
+to `~/imx500/config.json`:
+
+```json
+{
+  "location": {
+    "zip": "48838",
+    "place": "Greenville, Michigan",
+    "latitude": 43.1793,
+    "longitude": -85.2497
+  }
+}
+```
+
+Each morning at 03:00, the systemd timer restarts the service. The wrapper
+script (`imx500_capture_wrapper.sh`) then:
+
+1. Reads `config.json` to get the lat/long
+2. Calls the `astral` Python library to calculate today's sunrise and sunset
+   times for your location
+3. Sleeps until sunrise if started before it
+4. Launches `imx500_capture_log.py` at sunrise
+5. Stops the capture script at sunset and exits cleanly
+
+A clean exit tells systemd not to restart the service — it will remain
+stopped until the 03:00 timer fires the next morning.
+
+#### Typical daily cycle
+
+```
+03:00  →  Timer fires → wrapper starts → calculates today's sunrise/sunset
+           → sleeps until sunrise (e.g. 6:43 AM)
+06:43  →  Wrapper wakes → launches imx500_capture_log.py
+20:35  →  Sunset reached → wrapper stops capture script → exits cleanly
+           → systemd does NOT restart (clean exit)
+03:00  →  Next morning, timer fires again → repeat
+```
+
+#### Updating your location
+
+To change the zip code, re-run the service provisioning script with `--reset`:
+
+```bash
+sudo ./imx500pi_provision_service.sh --reset
+```
+
+This will prompt for a new zip code, resolve new coordinates, rewrite
+`config.json`, and restart the service.
+
+#### Checking today's sunrise and sunset
+
+```bash
+~/imx500_venv/bin/python3 - <<'PYEOF'
+import json
+from pathlib import Path
+from astral import LocationInfo
+from astral.sun import sun
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+config = json.loads(Path("~/imx500/config.json").expanduser().read_text())
+tz = ZoneInfo("localtime")
+loc = LocationInfo(latitude=config["location"]["latitude"],
+                   longitude=config["location"]["longitude"])
+s = sun(loc.observer, date=datetime.now(tz).date(), tzinfo=tz)
+print(f"Sunrise: {s['sunrise'].strftime('%I:%M %p %Z')}")
+print(f"Sunset:  {s['sunset'].strftime('%I:%M %p %Z')}")
+PYEOF
+```
+
 ### Re-Provisioning
 
 All provisioning scripts are re-runnable and will display a pre-run state
