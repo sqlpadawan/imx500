@@ -57,7 +57,7 @@ import json, os, sys
 from pathlib import Path
 from astral import LocationInfo
 from astral.sun import sun
-from datetime import date
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # Find config.json relative to this script's real location
@@ -73,8 +73,13 @@ lng = config["location"]["longitude"]
 # Use the system local timezone so today's date and times are correct locally
 local_tz = ZoneInfo("localtime")
 
+# Use datetime.now(local_tz).date() instead of date.today() to ensure the
+# date is evaluated in local time — date.today() may use UTC in systemd context
+from datetime import datetime
+today_local = datetime.now(local_tz).date()
+
 location = LocationInfo(latitude=lat, longitude=lng)
-s = sun(location.observer, date=date.today(), tzinfo=local_tz)
+s = sun(location.observer, date=today_local, tzinfo=local_tz)
 
 print(int(s["sunrise"].timestamp()), int(s["sunset"].timestamp()))
 PYEOF
