@@ -79,12 +79,12 @@ sudo ./imx500pi_provision_service.sh
 
 Check the service is running:
 ```bash
-systemctl --user status imx500_capture.service
+XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user status imx500_capture.service
 ```
 
 Check the timer is active:
 ```bash
-systemctl --user list-timers imx500_capture.timer
+XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user list-timers imx500_capture.timer
 ```
 
 Tail the event log:
@@ -94,20 +94,45 @@ tail -f /var/log/imx500/events.jsonl
 
 Follow the systemd journal:
 ```bash
-journalctl --user -u imx500_capture -f
+journalctl _SYSTEMD_USER_UNIT=imx500_capture.service -f
+```
+
+### Service Aliases
+
+`systemctl --user` requires `XDG_RUNTIME_DIR` to be set when run via sudo or
+from certain shell contexts. Add these aliases to `~/.bashrc` to avoid typing
+the full prefix every time:
+
+```bash
+echo "alias imx500='XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user'" >> ~/.bashrc
+source ~/.bashrc
+```
+
+Then use the alias for all service commands:
+
+```bash
+imx500 start imx500_capture.service
+imx500 stop imx500_capture.service
+imx500 restart imx500_capture.service
+imx500 status imx500_capture.service
+imx500 list-timers imx500_capture.timer
 ```
 
 ### Useful Service Commands
 
+All commands below assume the `imx500` alias is configured. If not, prefix
+each `systemctl --user` call with `XDG_RUNTIME_DIR=/run/user/$(id -u)`.
+
 | Action | Command |
 |---|---|
-| Start service | `systemctl --user start imx500_capture.service` |
-| Stop service | `systemctl --user stop imx500_capture.service` |
-| Restart service | `systemctl --user restart imx500_capture.service` |
-| Service status | `systemctl --user status imx500_capture.service` |
-| Timer status | `systemctl --user list-timers imx500_capture.timer` |
-| Live journal | `journalctl --user -u imx500_capture -f` |
+| Start service | `imx500 start imx500_capture.service` |
+| Stop service | `imx500 stop imx500_capture.service` |
+| Restart service | `imx500 restart imx500_capture.service` |
+| Service status | `imx500 status imx500_capture.service` |
+| Timer status | `imx500 list-timers imx500_capture.timer` |
+| Live journal | `journalctl _SYSTEMD_USER_UNIT=imx500_capture.service -f` |
 | Event log | `tail -f /var/log/imx500/events.jsonl` |
+| Wrapper log | `tail -f /var/log/imx500/wrapper.log` |
 
 ### Re-Provisioning
 
