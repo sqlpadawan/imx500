@@ -120,6 +120,29 @@ fi
 
 log "INFO" "Capture will run for ${RUN_S}s (until ${SUNSET_FMT})"
 
+# ── Rotate yesterday's event log if needed ───────────────────────────────────
+# Belt-and-suspenders: if the Python startup rotation somehow doesn't fire
+# (e.g. the script crashes before the handler initialises), this ensures the
+# previous day's log is renamed before a new file is created.
+EVENTS_LOG="${LOG_DIR}/events.jsonl"
+if [[ -f "$EVENTS_LOG" ]]; then
+    FILE_DATE=$(date -r "$EVENTS_LOG" +%Y-%m-%d)
+    TODAY=$(date +%Y-%m-%d)
+    if [[ "$FILE_DATE" != "$TODAY" ]]; then
+        ROTATE_NAME="${EVENTS_LOG}.${FILE_DATE}"
+        if [[ -f "$ROTATE_NAME" ]]; then
+            log "WARN" "Rotated file already exists: $ROTATE_NAME — skipping bash rotation (Python will handle it)"
+        else
+            mv "$EVENTS_LOG" "$ROTATE_NAME"
+            log "INFO" "Rotated stale log: $(basename "$EVENTS_LOG") → $(basename "$ROTATE_NAME")"
+        fi
+    else
+        log "INFO" "Event log is current (${FILE_DATE}) — no rotation needed"
+    fi
+else
+    log "INFO" "No existing event log found — fresh start"
+fi
+
 # ── Launch capture script, kill at sunset ────────────────────────────────────
 log "INFO" "Starting imx500_capture_log.py..."
 
