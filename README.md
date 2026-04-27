@@ -8,6 +8,13 @@ sudo apt upgrade -y
 sudo reboot
 ```
 
+### Enable Remote Access
+After the reboot, enable RPI Connect so the Pi is reachable without a monitor:
+```bash
+rpi-connect on
+rpi-connect signin
+```
+
 ### Install Git
 ```bash
 sudo apt install git -y
@@ -21,33 +28,24 @@ git config --global user.email "your_email@example.com"
 git config --global --list
 ```
 
-### Authentication Options
+### SSH Key Authentication
 
-#### Option A: HTTPS + Personal Access Token
-Create a PAT on your Git hosting service, then clone using HTTPS:
-```bash
-git clone https://github.com/USERNAME/imx500.git
-```
-Cache credentials:
-```bash
-git config --global credential.helper store
-```
-
-#### Option B: SSH Keys (Recommended)
-
-Generate SSH Key:
+Generate an SSH key:
 ```bash
 ssh-keygen -t ed25519 -C "your_email@example.com" -f ~/.ssh/id_ed25519_github
 ```
-Display Public Key:
+
+Display the public key and paste it into your GitHub account's SSH key settings:
 ```bash
 cat ~/.ssh/id_ed25519_github.pub
 ```
-Paste the public key into your account's SSH key settings, then test:
+
+Test the connection:
 ```bash
 ssh -T git@github.com
 ```
-Configure `~/.ssh/config`:
+
+Add an entry to `~/.ssh/config`:
 ```
 Host github.com
     HostName github.com
@@ -62,15 +60,14 @@ git clone git@github.com:USERNAME/imx500.git
 ```
 
 ### Execute Provisioning Scripts
+
+Run the three provisioning scripts in order. The first script ends with a reboot.
+
 ```bash
 cd ~/imx500
 chmod +x *.sh
 sudo ./imx500pi_provision.sh <username>
-```
-*(system reboots)*
-```bash
-rpi-connect on
-rpi-connect signin
+# --- system reboots ---
 sudo ./imx500pi_provision_python.sh
 sudo ./imx500pi_provision_service.sh
 ```
@@ -157,18 +154,17 @@ to `~/imx500/config.json`:
 }
 ```
 
-Each morning at 03:00, the systemd timer restarts the service. The wrapper
-script (`imx500_capture_wrapper.sh`) then:
+A systemd timer starts the service each morning at 03:00. The wrapper script
+(`imx500_capture_wrapper.sh`) then:
 
 1. Reads `config.json` to get the lat/long
-2. Calls the `astral` Python library to calculate today's sunrise and sunset
-   times for your location
-3. Sleeps until sunrise if started before it
+2. Calls the `astral` Python library to calculate today's sunrise and sunset times
+3. Sleeps until sunrise
 4. Launches `imx500_capture_log.py` at sunrise
 5. Stops the capture script at sunset and exits cleanly
 
-A clean exit tells systemd not to restart the service — it will remain
-stopped until the 03:00 timer fires the next morning.
+A clean exit tells systemd not to restart the service — it stays stopped until
+the 03:00 timer fires the next morning.
 
 #### Typical daily cycle
 
@@ -176,6 +172,9 @@ stopped until the 03:00 timer fires the next morning.
 03:00  →  Timer fires → wrapper starts → calculates today's sunrise/sunset
            → sleeps until sunrise (e.g. 6:43 AM)
 06:43  →  Wrapper wakes → launches imx500_capture_log.py
+           → TimedRotatingFileHandler detects midnight has passed since last
+             run, renames yesterday's log (events.jsonl.YYYY-MM-DD), starts
+             a fresh events.jsonl for today
 20:35  →  Sunset reached → wrapper stops capture script → exits cleanly
            → systemd does NOT restart (clean exit)
 03:00  →  Next morning, timer fires again → repeat

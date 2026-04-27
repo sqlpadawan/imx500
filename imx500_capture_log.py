@@ -34,7 +34,11 @@ _event_logger.propagate = False
 
 _log_handler = TimedRotatingFileHandler(
     filename    = LOG_DIR / "events.jsonl",
-    when        = "midnight",   # rotate at midnight local time
+    when        = "midnight",   # rollover threshold is midnight; since the process
+                                # stops at sunset and restarts at sunrise, rotation
+                                # actually occurs at startup — the handler detects
+                                # the missed rollover and renames the previous day's
+                                # file on first open.
     interval    = 1,
     backupCount = 30,           # keep 30 days of rotated files
     encoding    = "utf-8",
@@ -42,21 +46,6 @@ _log_handler = TimedRotatingFileHandler(
 )
 _log_handler.suffix = "%Y-%m-%d"   # e.g. events.jsonl.2026-04-15
 _event_logger.addHandler(_log_handler)
-
-# ── Startup rotation ──────────────────────────────────────────────────────────
-# TimedRotatingFileHandler only rotates while the process is running across
-# midnight. Because this script is restarted each morning by the systemd timer,
-# it never crosses midnight on its own. We force a rollover at startup whenever
-# the existing log file was last written on a prior calendar day.
-_log_path = LOG_DIR / "events.jsonl"
-if _log_path.exists():
-    _file_date = datetime.fromtimestamp(_log_path.stat().st_mtime).date()
-    if _file_date < datetime.now().date():
-        _log_handler.doRollover()
-        logging.getLogger("imx500.events").info(
-            # log a sentinel so the new file has an obvious start marker
-            '{"event":"log_rotated","reason":"startup","prior_date":"%s"}' % _file_date
-        )
 
 # Tracking state: label seen in current/previous frame sets
 # key   → bucketed bbox string  e.g. "213_045"
