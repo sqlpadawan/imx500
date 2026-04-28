@@ -150,6 +150,9 @@ to `~/imx500/config.json`:
     "place": "Greenville, Michigan",
     "latitude": 43.1793,
     "longitude": -85.2497
+  },
+  "logging": {
+    "max_log_files": 30
   }
 }
 ```
@@ -190,6 +193,25 @@ sudo ./imx500pi_provision_service.sh --reset
 
 This will prompt for a new zip code, resolve new coordinates, rewrite
 `config.json`, and restart the service.
+
+#### Controlling log file retention
+
+The number of daily event log files kept in `/var/log/imx500/` is controlled
+by `max_log_files` in `config.json`. The default is 30 days. To change it,
+edit the value and restart the service:
+
+```json
+"logging": {
+  "max_log_files": 14
+}
+```
+
+```bash
+imx500 restart imx500_capture.service
+```
+
+If `max_log_files` is missing from `config.json`, the capture script defaults
+to 30.
 
 #### Checking today's sunrise and sunset
 

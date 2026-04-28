@@ -7,6 +7,7 @@ import sys
 import threading
 import socket
 import time
+import mimetypes
 from datetime import datetime, timezone
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -28,6 +29,15 @@ HTTP_PORT = 8081
 LOG_DIR = Path("/var/log/imx500")
 LOG_DIR.mkdir(exist_ok=True)
 
+# Read max_log_files from config.json if present, default to 30
+_config_path = Path(__file__).parent / "config.json"
+try:
+    with open(_config_path) as _f:
+        _config = json.load(_f)
+    MAX_LOG_FILES = int(_config.get("logging", {}).get("max_log_files", 30))
+except Exception:
+    MAX_LOG_FILES = 30
+
 _event_logger = logging.getLogger("imx500.events")
 _event_logger.setLevel(logging.INFO)
 _event_logger.propagate = False
@@ -40,7 +50,7 @@ _log_handler = TimedRotatingFileHandler(
                                 # the missed rollover and renames the previous day's
                                 # file on first open.
     interval    = 1,
-    backupCount = 30,           # keep 30 days of rotated files
+    backupCount = MAX_LOG_FILES,  # configured via logging.max_log_files in config.json
     encoding    = "utf-8",
     utc         = False,
 )
@@ -209,21 +219,48 @@ def make_html(local_ip):
 </html>""".encode()
 
 _html_cache = None
+_dashboard_cache = None
 
 class PageHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
     def do_GET(self):
-        body = _html_cache or b"starting..."
+        path = self.path.split("?")[0]
+
+        if path in ("/", "/index.html"):
+            body  = _html_cache or b"starting..."
+            ctype = "text/html; charset=utf-8"
+        elif path in ("/dashboard", "/dashboard.html"):
+            body  = _dashboard_cache or b"starting..."
+            ctype = "text/html; charset=utf-8"
+        elif path == "/summary.json":
+            summary_path = LOG_DIR / "summary.json"
+            try:
+                body  = summary_path.read_bytes()
+            except OSError:
+                body  = b'{"days":[]}'
+            ctype = "application/json"
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
 def run_http_server(local_ip):
-    global _html_cache
+    global _html_cache, _dashboard_cache
     _html_cache = make_html(local_ip)
+
+    dashboard_path = Path(__file__).parent / "dashboard.html"
+    try:
+        _dashboard_cache = dashboard_path.read_bytes()
+    except OSError:
+        _dashboard_cache = b"<p>dashboard.html not found in repo directory</p>"
+
     server = HTTPServer(("0.0.0.0", HTTP_PORT), PageHandler)
     server.serve_forever()
 
@@ -429,8 +466,9 @@ if __name__ == "__main__":
 
     t_ws = threading.Thread(target=start_ws_thread, daemon=True)
     t_ws.start()
-
-    print(f"Viewer page:  http://{local_ip}:{HTTP_PORT}/")
+    
+    print(f"Live view:    http://{local_ip}:{HTTP_PORT}/")
+    print(f"Dashboard:    http://{local_ip}:{HTTP_PORT}/dashboard")
     print(f"WebSocket:    ws://{local_ip}:{WS_PORT}/")
     print(f"Event log:    {LOG_DIR / 'events.jsonl'}")
 

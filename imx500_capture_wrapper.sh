@@ -143,6 +143,14 @@ else
     log "INFO" "No existing event log found — fresh start"
 fi
 
+# ── Build event log summary for dashboard ─────────────────────────────────────
+log "INFO" "Building event summary for dashboard..."
+"$VENV_PYTHON" "${SCRIPT_DIR}/build_summary.py" \
+    --log-dir "$LOG_DIR" \
+    --out "${LOG_DIR}/summary.json" \
+    && log "INFO" "summary.json written" \
+    || log "WARN" "build_summary.py failed — dashboard may show stale data"
+    
 # ── Launch capture script, kill at sunset ────────────────────────────────────
 log "INFO" "Starting imx500_capture_log.py..."
 

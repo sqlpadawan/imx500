@@ -314,6 +314,9 @@ PYEOF
     "place": "${PLACE_NAME}, ${STATE_NAME}",
     "latitude": ${LATITUDE},
     "longitude": ${LONGITUDE}
+  },
+  "logging": {
+    "max_log_files": 30
   }
 }
 EOF
