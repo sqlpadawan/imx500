@@ -21,12 +21,30 @@ sudo apt install git -y
 git --version
 ```
 
+### Configure Git
+Because the development is done on another box, do not track
+permissions changes
+```bash
+
+```
+
 ### Configure Git Identity
 ```bash
 git config --global user.name "Your Name"
 git config --global user.email "your_email@example.com"
 git config --global --list
 ```
+
+### Prevent Permission Change Conflicts
+
+Raspberry Pi OS marks shell scripts as executable with `chmod +x`, which git tracks as a file change and blocks future pulls. Disable permission tracking in this repo so that doesn't happen:
+
+```bash
+git config core.fileMode false
+```
+
+This is a local repo setting — it only affects this clone on the Pi and does
+not change anything in GitHub.
 
 ### SSH Key Authentication
 
