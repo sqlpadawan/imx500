@@ -2,7 +2,7 @@
 ################################################################################
 # IMX500 Capture Wrapper Script
 ################################################################################
-# Wraps imx500_capture_log.py with sunrise/sunset gating. Called by the
+# Wraps imx500_capture.py with sunrise/sunset gating. Called by the
 # systemd service unit. Reads lat/long from config.json, sleeps until sunrise,
 # runs the capture script until sunset, then exits cleanly.
 #
@@ -10,9 +10,13 @@
 # restarts the service each morning, which re-evaluates sunrise/sunset for the
 # current day.
 #
+# The HTTP and WebSocket server (imx500_server.py) runs as a separate always-on
+# service and is NOT managed by this wrapper.
+#
 # Dependencies:
 #   - astral (pip)
 #   - config.json in the repo root with latitude and longitude fields
+#   - imx500_server.service running (started at boot, independent of this script)
 #
 # Usage:
 #   Called by systemd — not intended for direct invocation.
@@ -24,7 +28,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_JSON="${SCRIPT_DIR}/config.json"
 VENV_PYTHON="${HOME}/imx500_venv/bin/python3"
-CAPTURE_SCRIPT="${SCRIPT_DIR}/imx500_capture_log.py"
+CAPTURE_SCRIPT="${SCRIPT_DIR}/imx500_capture.py"
 LOG_DIR="/var/log/imx500"
 LOG_FILE="${LOG_DIR}/wrapper.log"
 
@@ -60,7 +64,6 @@ from astral.sun import sun
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-# Find config.json relative to this script's real location
 script_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
 config_path = Path(script_dir) / "config.json"
 
@@ -70,12 +73,7 @@ with open(config_path) as f:
 lat = config["location"]["latitude"]
 lng = config["location"]["longitude"]
 
-# Use the system local timezone so today's date and times are correct locally
-local_tz = ZoneInfo("localtime")
-
-# Use datetime.now(local_tz).date() instead of date.today() to ensure the
-# date is evaluated in local time — date.today() may use UTC in systemd context
-from datetime import datetime
+local_tz   = ZoneInfo("localtime")
 today_local = datetime.now(local_tz).date()
 
 location = LocationInfo(latitude=lat, longitude=lng)
@@ -121,9 +119,6 @@ fi
 log "INFO" "Capture will run for ${RUN_S}s (until ${SUNSET_FMT})"
 
 # ── Rotate yesterday's event log if needed ───────────────────────────────────
-# Belt-and-suspenders: if the Python startup rotation somehow doesn't fire
-# (e.g. the script crashes before the handler initialises), this ensures the
-# previous day's log is renamed before a new file is created.
 EVENTS_LOG="${LOG_DIR}/events.jsonl"
 if [[ -f "$EVENTS_LOG" ]]; then
     FILE_DATE=$(date -r "$EVENTS_LOG" +%Y-%m-%d)
@@ -150,17 +145,15 @@ log "INFO" "Building event summary for dashboard..."
     --out "${LOG_DIR}/summary.json" \
     && log "INFO" "summary.json written" \
     || log "WARN" "build_summary.py failed — dashboard may show stale data"
-    
+
 # ── Launch capture script, kill at sunset ────────────────────────────────────
-log "INFO" "Starting imx500_capture_log.py..."
+log "INFO" "Starting imx500_capture.py..."
 
 "$VENV_PYTHON" "$CAPTURE_SCRIPT" &
 CAPTURE_PID=$!
 
 log "INFO" "Capture PID: ${CAPTURE_PID}"
 
-# Sleep until sunset, then stop the capture script.
-# If the capture script dies before sunset, the sleep finishes and we exit cleanly.
 sleep "$RUN_S"
 
 if kill -0 "$CAPTURE_PID" 2>/dev/null; then

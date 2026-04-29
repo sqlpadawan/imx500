@@ -1,4 +1,30 @@
 # IMX500 Street Monitor Project
+
+## Architecture
+
+The system runs as two independent systemd services:
+
+| Service | Script | Runs | Responsibility |
+|---|---|---|---|
+| `imx500_server.service` | `imx500_server.py` | Always (24/7) | HTTP server, WebSocket server, frame relay |
+| `imx500_capture.service` | `imx500_capture.py` | Sunrise to sunset | Camera, AI inference, event logging |
+
+The server starts at boot and stays up permanently. The capture script runs only
+during daylight hours and sends annotated JPEG frames to the server via a Unix
+socket (`/tmp/imx500_frames.sock`). When the camera is offline the dashboard
+remains accessible and the live view shows "waiting for camera..."
+
+### Web Interfaces
+
+| URL | Content |
+|---|---|
+| `http://<pi-ip>:8081/` | Live camera stream with bounding boxes |
+| `http://<pi-ip>:8081/dashboard` | Event log summary by day and label |
+| `http://<pi-ip>:8081/summary.json` | Raw summary data (JSON) |
+| `ws://<pi-ip>:8080/` | WebSocket frame stream |
+
+---
+
 ## Git Setup on Raspberry Pi OS Debian Trixie (Headless)
 
 ### Update the System
@@ -21,30 +47,12 @@ sudo apt install git -y
 git --version
 ```
 
-### Configure Git
-Because the development is done on another box, do not track
-permissions changes
-```bash
-
-```
-
 ### Configure Git Identity
 ```bash
 git config --global user.name "Your Name"
 git config --global user.email "your_email@example.com"
 git config --global --list
 ```
-
-### Prevent Permission Change Conflicts
-
-Raspberry Pi OS marks shell scripts as executable with `chmod +x`, which git tracks as a file change and blocks future pulls. Disable permission tracking in this repo so that doesn't happen:
-
-```bash
-git config core.fileMode false
-```
-
-This is a local repo setting — it only affects this clone on the Pi and does
-not change anything in GitHub.
 
 ### SSH Key Authentication
 
@@ -90,7 +98,9 @@ git config core.fileMode false
 This is a local repo setting — it only affects this clone on the Pi and does
 not change anything in GitHub.
 
-### Execute Provisioning Scripts
+---
+
+## Provisioning
 
 Run the three provisioning scripts in order. The first script ends with a reboot.
 
@@ -103,16 +113,38 @@ sudo ./imx500pi_provision_python.sh
 sudo ./imx500pi_provision_service.sh
 ```
 
-### Verify the Installation
+### What each script does
 
-Check the service is running:
+| Script | Purpose |
+|---|---|
+| `imx500pi_provision.sh` | Base OS: camera interface, I2C, GPU memory, log directory, WiFi power saving |
+| `imx500pi_provision_python.sh` | Python venv with all required packages |
+| `imx500pi_provision_service.sh` | Location config, systemd service units, start everything |
+
+### Re-Provisioning
+
+All provisioning scripts are re-runnable and display a pre-run state check
+before making any changes.
+
+| Script | Re-run behavior |
+|---|---|
+| `imx500pi_provision.sh` | Skips already-applied changes, re-applies missing ones |
+| `imx500pi_provision_python.sh` | Skips installed packages and existing venv; use `--reset` to rebuild venv |
+| `imx500pi_provision_service.sh` | Stops services, rewrites unit files, restarts; use `--reset` to reconfigure location |
+
+---
+
+## Verify the Installation
+
+Check both services are running:
 ```bash
-XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user status imx500_capture.service
+imx500 status imx500_server.service
+imx500 status imx500_capture.service
 ```
 
 Check the timer is active:
 ```bash
-XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user list-timers imx500_capture.timer
+imx500 list-timers imx500_capture.timer
 ```
 
 Tail the event log:
@@ -120,30 +152,23 @@ Tail the event log:
 tail -f /var/log/imx500/events.jsonl
 ```
 
-Follow the systemd journal:
+Follow the journal for each service:
 ```bash
-journalctl _SYSTEMD_USER_UNIT=imx500_capture.service -f
+journalctl --user -u imx500_server.service -f
+journalctl --user -u imx500_capture.service -f
 ```
 
-### Service Aliases
+---
+
+## Service Aliases
 
 `systemctl --user` requires `XDG_RUNTIME_DIR` to be set when run via sudo or
-from certain shell contexts. Add these aliases to `~/.bashrc` to avoid typing
+from certain shell contexts. Add this alias to `~/.bashrc` to avoid typing
 the full prefix every time:
 
 ```bash
 echo "alias imx500='XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user'" >> ~/.bashrc
 source ~/.bashrc
-```
-
-Then use the alias for all service commands:
-
-```bash
-imx500 start imx500_capture.service
-imx500 stop imx500_capture.service
-imx500 restart imx500_capture.service
-imx500 status imx500_capture.service
-imx500 list-timers imx500_capture.timer
 ```
 
 ### Useful Service Commands
@@ -153,21 +178,28 @@ each `systemctl --user` call with `XDG_RUNTIME_DIR=/run/user/$(id -u)`.
 
 | Action | Command |
 |---|---|
-| Start service | `imx500 start imx500_capture.service` |
-| Stop service | `imx500 stop imx500_capture.service` |
-| Restart service | `imx500 restart imx500_capture.service` |
-| Service status | `imx500 status imx500_capture.service` |
+| Start server | `imx500 start imx500_server.service` |
+| Stop server | `imx500 stop imx500_server.service` |
+| Restart server | `imx500 restart imx500_server.service` |
+| Server status | `imx500 status imx500_server.service` |
+| Start capture | `imx500 start imx500_capture.service` |
+| Stop capture | `imx500 stop imx500_capture.service` |
+| Restart capture | `imx500 restart imx500_capture.service` |
+| Capture status | `imx500 status imx500_capture.service` |
 | Timer status | `imx500 list-timers imx500_capture.timer` |
-| Live journal | `journalctl _SYSTEMD_USER_UNIT=imx500_capture.service -f` |
+| Server journal | `journalctl --user -u imx500_server.service -f` |
+| Capture journal | `journalctl --user -u imx500_capture.service -f` |
 | Event log | `tail -f /var/log/imx500/events.jsonl` |
 | Wrapper log | `tail -f /var/log/imx500/wrapper.log` |
 
-### Daylight-Only Operation
+---
 
-The capture service runs only between sunrise and sunset. This is handled
-automatically using your location's coordinates stored in `config.json`.
+## Daylight-Only Operation
 
-#### How it works
+The capture service runs only between sunrise and sunset. The HTTP and WebSocket
+server runs 24/7 — the dashboard is always accessible regardless of time of day.
+
+### How it works
 
 During `imx500pi_provision_service.sh`, you are prompted for a US zip code.
 The script resolves this offline using the `pgeocode` library (no API key or
@@ -188,33 +220,36 @@ to `~/imx500/config.json`:
 }
 ```
 
-A systemd timer starts the service each morning at 03:00. The wrapper script
-(`imx500_capture_wrapper.sh`) then:
+A systemd timer starts the capture service each morning at 03:00. The wrapper
+script (`imx500_capture_wrapper.sh`) then:
 
 1. Reads `config.json` to get the lat/long
 2. Calls the `astral` Python library to calculate today's sunrise and sunset times
 3. Sleeps until sunrise
-4. Launches `imx500_capture_log.py` at sunrise
-5. Stops the capture script at sunset and exits cleanly
+4. Runs `build_summary.py` to rebuild `summary.json` from all historical logs
+5. Launches `imx500_capture.py` at sunrise
+6. Stops the capture script at sunset and exits cleanly
 
 A clean exit tells systemd not to restart the service — it stays stopped until
 the 03:00 timer fires the next morning.
 
-#### Typical daily cycle
+### Typical daily cycle
 
 ```
 03:00  →  Timer fires → wrapper starts → calculates today's sunrise/sunset
            → sleeps until sunrise (e.g. 6:43 AM)
-06:43  →  Wrapper wakes → launches imx500_capture_log.py
+06:43  →  Wrapper wakes → builds summary.json → launches imx500_capture.py
            → TimedRotatingFileHandler detects midnight has passed since last
              run, renames yesterday's log (events.jsonl.YYYY-MM-DD), starts
              a fresh events.jsonl for today
+           → capture script connects to server frame socket, begins streaming
 20:35  →  Sunset reached → wrapper stops capture script → exits cleanly
-           → systemd does NOT restart (clean exit)
+           → server keeps running, dashboard still accessible
+           → systemd does NOT restart capture (clean exit)
 03:00  →  Next morning, timer fires again → repeat
 ```
 
-#### Updating your location
+### Updating your location
 
 To change the zip code, re-run the service provisioning script with `--reset`:
 
@@ -223,13 +258,13 @@ sudo ./imx500pi_provision_service.sh --reset
 ```
 
 This will prompt for a new zip code, resolve new coordinates, rewrite
-`config.json`, and restart the service.
+`config.json`, and restart both services.
 
-#### Controlling log file retention
+### Controlling log file retention
 
 The number of daily event log files kept in `/var/log/imx500/` is controlled
 by `max_log_files` in `config.json`. The default is 30 days. To change it,
-edit the value and restart the service:
+edit the value and restart the capture service:
 
 ```json
 "logging": {
@@ -244,7 +279,7 @@ imx500 restart imx500_capture.service
 If `max_log_files` is missing from `config.json`, the capture script defaults
 to 30.
 
-#### Checking today's sunrise and sunset
+### Checking today's sunrise and sunset
 
 ```bash
 ~/imx500_venv/bin/python3 - <<'PYEOF'
@@ -265,13 +300,16 @@ print(f"Sunset:  {s['sunset'].strftime('%I:%M %p %Z')}")
 PYEOF
 ```
 
-### Re-Provisioning
+---
 
-All provisioning scripts are re-runnable and will display a pre-run state
-check before making any changes.
+## Dashboard
 
-| Script | Re-run behavior |
-|---|---|
-| `imx500pi_provision.sh` | Skips already-applied changes, re-applies missing ones |
-| `imx500pi_provision_python.sh` | Skips installed packages and existing venv; use `--reset` to rebuild venv |
-| `imx500pi_provision_service.sh` | Stops service, rewrites unit files, restarts; use `--reset` to reconfigure location |
+The event log dashboard is served at `http://<pi-ip>:8081/dashboard` and is
+available 24/7 via `imx500_server.service`.
+
+`summary.json` is rebuilt each morning by `build_summary.py` before the camera
+starts. It can also be rebuilt manually at any time:
+
+```bash
+~/imx500_venv/bin/python3 ~/imx500/build_summary.py
+```

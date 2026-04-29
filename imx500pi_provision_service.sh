@@ -4,13 +4,14 @@ set -euo pipefail
 ################################################################################
 # Raspberry Pi IMX500 Street Monitor - Service Provisioning Script
 ################################################################################
-# This script configures the IMX500 capture service for unattended headless
-# operation. It prompts for location (zip code), resolves lat/long offline,
-# writes config.json, installs the systemd user service and daily restart
-# timer, and enables both to start on boot.
+# Installs and configures two systemd user services:
 #
-# The capture script runs only between sunrise and sunset, gated by a wrapper
-# script that uses the astral library with coordinates from config.json.
+#   imx500_server.service   — Always-on HTTP + WebSocket server (port 8080/8081)
+#                             Starts at boot, runs 24/7.
+#
+#   imx500_capture.service  — Camera capture, inference, event logging.
+#                             Gated to sunrise/sunset by wrapper script.
+#                             Started by imx500_capture.timer at 03:00 daily.
 #
 # Prerequisites:
 #   - imx500pi_provision.sh already run (base OS provisioning)
@@ -28,7 +29,7 @@ set -euo pipefail
 ################################################################################
 
 ### Constants
-readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_VERSION="2.0.0"
 readonly LOG_DIR="/var/log/imx500"
 readonly LOG_FILE="${LOG_DIR}/imx500pi_provision_service.log"
 
@@ -92,8 +93,6 @@ if ! id "$ACTUAL_USER" &>/dev/null; then
 fi
 
 ### Helper — run systemctl --user as the actual user from a sudo context
-# systemctl --user requires XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS,
-# which are not available in a sudo shell. This helper sets them explicitly.
 run_user_systemctl() {
     local uid
     uid=$(id -u "$ACTUAL_USER")
@@ -108,8 +107,10 @@ REPO_DIR="${ACTUAL_HOME}/imx500"
 VENV_PYTHON="${ACTUAL_HOME}/imx500_venv/bin/python3"
 CONFIG_JSON="${REPO_DIR}/config.json"
 WRAPPER_SCRIPT="${REPO_DIR}/imx500_capture_wrapper.sh"
+SERVER_SCRIPT="${REPO_DIR}/imx500_server.py"
 SYSTEMD_USER_DIR="${ACTUAL_HOME}/.config/systemd/user"
-SERVICE_FILE="${SYSTEMD_USER_DIR}/imx500_capture.service"
+SERVER_SERVICE_FILE="${SYSTEMD_USER_DIR}/imx500_server.service"
+CAPTURE_SERVICE_FILE="${SYSTEMD_USER_DIR}/imx500_capture.service"
 TIMER_FILE="${SYSTEMD_USER_DIR}/imx500_capture.timer"
 
 log "INFO" "Starting service provisioning (script v$SCRIPT_VERSION)"
@@ -126,7 +127,6 @@ check_existing_provision() {
 
     local all_ok=true
 
-    # config.json
     if [[ -f "$CONFIG_JSON" ]]; then
         local zip place
         zip=$(python3   -c "import json; d=json.load(open('$CONFIG_JSON')); print(d['location']['zip'])"   2>/dev/null || echo "unknown")
@@ -137,7 +137,6 @@ check_existing_provision() {
         all_ok=false
     fi
 
-    # Wrapper script
     if [[ -f "$WRAPPER_SCRIPT" && -x "$WRAPPER_SCRIPT" ]]; then
         log "INFO" "  [OK]      Wrapper script exists and is executable"
     elif [[ -f "$WRAPPER_SCRIPT" ]]; then
@@ -147,40 +146,21 @@ check_existing_provision() {
         all_ok=false
     fi
 
-    # Systemd unit files
-    if [[ -f "$SERVICE_FILE" ]]; then
-        log "INFO" "  [OK]      Service unit exists: $SERVICE_FILE"
+    if [[ -f "$SERVER_SCRIPT" ]]; then
+        log "INFO" "  [OK]      Server script exists: $SERVER_SCRIPT"
     else
-        log "INFO" "  [MISSING] Service unit not found — will create"
+        log "INFO" "  [MISSING] Server script not found: $SERVER_SCRIPT"
         all_ok=false
     fi
 
-    if [[ -f "$TIMER_FILE" ]]; then
-        log "INFO" "  [OK]      Timer unit exists: $TIMER_FILE"
-    else
-        log "INFO" "  [MISSING] Timer unit not found — will create"
-        all_ok=false
-    fi
-
-    # Service and timer runtime status
-    local svc_enabled svc_active timer_enabled timer_active
-    svc_enabled=$(run_user_systemctl is-enabled imx500_capture.service 2>/dev/null || echo "not-found")
-    svc_active=$(run_user_systemctl is-active  imx500_capture.service 2>/dev/null || echo "inactive")
-    timer_enabled=$(run_user_systemctl is-enabled imx500_capture.timer  2>/dev/null || echo "not-found")
-    timer_active=$(run_user_systemctl is-active  imx500_capture.timer  2>/dev/null || echo "inactive")
-
-    log "INFO" "  [INFO]    Service: enabled=$svc_enabled  active=$svc_active"
-    log "INFO" "  [INFO]    Timer:   enabled=$timer_enabled  active=$timer_active"
-
-    log "INFO" "========================================="
-
-    if [[ "$all_ok" == true ]]; then
-        log "INFO" "Environment appears fully provisioned"
-        log "INFO" "Re-running will stop the service, rewrite unit files, and restart"
-        log "INFO" "Use --reset to also wipe config.json and re-enter zip code"
-    else
-        log "INFO" "Some components are missing — provisioning will create them now"
-    fi
+    for f in "$SERVER_SERVICE_FILE" "$CAPTURE_SERVICE_FILE" "$TIMER_FILE"; do
+        if [[ -f "$f" ]]; then
+            log "INFO" "  [OK]      $(basename $f) exists"
+        else
+            log "INFO" "  [MISSING] $(basename $f) not found — will create"
+            all_ok=false
+        fi
+    done
 
     log "INFO" "========================================="
 }
@@ -194,29 +174,30 @@ log "INFO" "Validating prerequisites..."
 
 if [[ ! -d "$REPO_DIR" ]]; then
     log "ERROR" "Repo directory not found: $REPO_DIR"
-    log "ERROR" "Clone the repo first: git clone <url> ~/imx500"
     exit 1
 fi
 
 if [[ ! -f "$VENV_PYTHON" ]]; then
     log "ERROR" "Python venv not found at $VENV_PYTHON"
-    log "ERROR" "Run imx500pi_provision_python.sh first"
     exit 1
 fi
 
 if [[ ! -f "$WRAPPER_SCRIPT" ]]; then
     log "ERROR" "Wrapper script not found at $WRAPPER_SCRIPT"
-    log "ERROR" "Ensure imx500_capture_wrapper.sh is present in the repo"
     exit 1
 fi
 
-# Verify astral is available in the venv (required for wrapper)
+if [[ ! -f "$SERVER_SCRIPT" ]]; then
+    log "ERROR" "Server script not found at $SERVER_SCRIPT"
+    log "ERROR" "Ensure imx500_server.py is present in the repo"
+    exit 1
+fi
+
 if ! sudo -u "$ACTUAL_USER" "$VENV_PYTHON" -c "import astral" 2>/dev/null; then
     log "ERROR" "astral not available in venv — run imx500pi_provision_python.sh first"
     exit 1
 fi
 
-# Verify pgeocode is available in the venv (required for zip resolution)
 if ! sudo -u "$ACTUAL_USER" "$VENV_PYTHON" -c "import pgeocode" 2>/dev/null; then
     log "ERROR" "pgeocode not available in venv — run imx500pi_provision_python.sh first"
     exit 1
@@ -230,19 +211,20 @@ log "INFO" "Prerequisites validated"
 if [[ "$RESET_MODE" == true ]]; then
     log "INFO" "Reset mode — removing existing config and service files..."
 
-    # Stop and disable service/timer if running
-    if run_user_systemctl is-active imx500_capture.service &>/dev/null; then
-        run_user_systemctl stop imx500_capture.service || true
-        log "INFO" "Service stopped"
-    fi
-    if run_user_systemctl is-enabled imx500_capture.timer &>/dev/null; then
-        run_user_systemctl disable imx500_capture.timer || true
-        log "INFO" "Timer disabled"
-    fi
+    for svc in imx500_server.service imx500_capture.service imx500_capture.timer; do
+        if run_user_systemctl is-active "$svc" &>/dev/null; then
+            run_user_systemctl stop "$svc" || true
+            log "INFO" "Stopped $svc"
+        fi
+        if run_user_systemctl is-enabled "$svc" &>/dev/null; then
+            run_user_systemctl disable "$svc" || true
+            log "INFO" "Disabled $svc"
+        fi
+    done
 
-    [[ -f "$CONFIG_JSON" ]]  && rm -f "$CONFIG_JSON"  && log "INFO" "Removed $CONFIG_JSON"
-    [[ -f "$SERVICE_FILE" ]] && rm -f "$SERVICE_FILE" && log "INFO" "Removed $SERVICE_FILE"
-    [[ -f "$TIMER_FILE" ]]   && rm -f "$TIMER_FILE"   && log "INFO" "Removed $TIMER_FILE"
+    for f in "$CONFIG_JSON" "$SERVER_SERVICE_FILE" "$CAPTURE_SERVICE_FILE" "$TIMER_FILE"; do
+        [[ -f "$f" ]] && rm -f "$f" && log "INFO" "Removed $f"
+    done
 
     log "INFO" "Reset complete — continuing with fresh provisioning..."
 fi
@@ -253,21 +235,17 @@ fi
 log "INFO" "Configuring location..."
 
 if [[ -f "$CONFIG_JSON" && "$RESET_MODE" == false ]]; then
-    log "INFO" "config.json already exists at $CONFIG_JSON — skipping"
-    log "INFO" "Use --reset to reconfigure"
+    log "INFO" "config.json already exists — skipping (use --reset to reconfigure)"
 else
-    # Prompt for zip code
     while true; do
         echo ""
         read -r -p "Enter US zip code for sunrise/sunset calculation: " ZIP_CODE
 
-        # Basic format validation
         if ! [[ "$ZIP_CODE" =~ ^[0-9]{5}$ ]]; then
             echo "ERROR: Zip code must be exactly 5 digits"
             continue
         fi
 
-        # Resolve zip to lat/long using pgeocode
         log "INFO" "Resolving zip code $ZIP_CODE..."
 
         LOCATION_RESULT=$(sudo -u "$ACTUAL_USER" "$VENV_PYTHON" - <<PYEOF
@@ -286,7 +264,6 @@ PYEOF
             continue
         fi
 
-        # Parse result
         PLACE_NAME=$(echo "$LOCATION_RESULT" | cut -d',' -f1)
         STATE_NAME=$(echo "$LOCATION_RESULT" | cut -d',' -f2)
         LATITUDE=$(echo "$LOCATION_RESULT"   | cut -d',' -f3)
@@ -303,9 +280,6 @@ PYEOF
             break
         fi
     done
-
-    # Write config.json
-    log "INFO" "Writing config.json..."
 
     cat > "$CONFIG_JSON" << EOF
 {
@@ -327,90 +301,102 @@ EOF
 fi
 
 ################################################################################
-### 4. Make Wrapper Script Executable
+### 4. Make Scripts Executable
 ################################################################################
-log "INFO" "Setting wrapper script permissions..."
-
-if chmod +x "$WRAPPER_SCRIPT"; then
-    log "INFO" "Wrapper script is executable: $WRAPPER_SCRIPT"
-else
-    log "ERROR" "Failed to set executable bit on wrapper script"
-    exit 1
-fi
+log "INFO" "Setting script permissions..."
+chmod +x "$WRAPPER_SCRIPT"
+log "INFO" "Wrapper script is executable"
 
 ################################################################################
 ### 5. Create Systemd User Directory
 ################################################################################
-log "INFO" "Creating systemd user directory..."
-
 if [[ ! -d "$SYSTEMD_USER_DIR" ]]; then
     sudo -u "$ACTUAL_USER" mkdir -p "$SYSTEMD_USER_DIR"
     log "INFO" "Created $SYSTEMD_USER_DIR"
-else
-    log "INFO" "$SYSTEMD_USER_DIR already exists"
 fi
 
 ################################################################################
-### 6. Stop Service Before Rewriting Unit Files
+### 6. Stop Services Before Rewriting Unit Files
 ################################################################################
-log "INFO" "Stopping service before rewriting unit files..."
-
-if run_user_systemctl is-active imx500_capture.service &>/dev/null; then
-    run_user_systemctl stop imx500_capture.service 2>&1 | tee -a "$LOG_FILE" || true
-    log "INFO" "Service stopped"
-else
-    log "INFO" "Service was not running — nothing to stop"
-fi
+for svc in imx500_server.service imx500_capture.service; do
+    if run_user_systemctl is-active "$svc" &>/dev/null; then
+        run_user_systemctl stop "$svc" 2>&1 | tee -a "$LOG_FILE" || true
+        log "INFO" "Stopped $svc"
+    fi
+done
 
 ################################################################################
-### 7. Write Systemd Service Unit
+### 7. Write imx500_server.service
 ################################################################################
-log "INFO" "Writing systemd service unit..."
+log "INFO" "Writing imx500_server.service..."
 
-cat > "$SERVICE_FILE" << EOF
+cat > "$SERVER_SERVICE_FILE" << EOF
 [Unit]
-Description=IMX500 AI Camera Street Monitor
+Description=IMX500 HTTP and WebSocket Server
 Documentation=https://github.com/${ACTUAL_USER}/imx500
-# Wait for network so the IP socket lookup in the capture script succeeds
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=${REPO_DIR}
-ExecStart=${WRAPPER_SCRIPT}
-# Restart on crash/error but NOT on clean exit (exit 0 = past sunset, don't restart)
-Restart=on-failure
-RestartSec=10s
-# Log stdout/stderr to the systemd journal (readable via journalctl --user -u imx500_capture)
+ExecStart=${VENV_PYTHON} ${REPO_DIR}/imx500_server.py
+Restart=always
+RestartSec=5s
 StandardOutput=journal
 StandardError=journal
-# Environment
 Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=default.target
 EOF
 
-chown "${ACTUAL_USER}:${ACTUAL_USER}" "$SERVICE_FILE"
-chmod 644 "$SERVICE_FILE"
-log "INFO" "Service unit written: $SERVICE_FILE"
+chown "${ACTUAL_USER}:${ACTUAL_USER}" "$SERVER_SERVICE_FILE"
+chmod 644 "$SERVER_SERVICE_FILE"
+log "INFO" "imx500_server.service written"
 
 ################################################################################
-### 8. Write Systemd Timer Unit
+### 8. Write imx500_capture.service
 ################################################################################
-log "INFO" "Writing systemd timer unit..."
+log "INFO" "Writing imx500_capture.service..."
+
+cat > "$CAPTURE_SERVICE_FILE" << EOF
+[Unit]
+Description=IMX500 AI Camera Capture and Event Logger
+Documentation=https://github.com/${ACTUAL_USER}/imx500
+After=network-online.target imx500_server.service
+Wants=network-online.target
+Requires=imx500_server.service
+
+[Service]
+Type=simple
+WorkingDirectory=${REPO_DIR}
+ExecStart=${WRAPPER_SCRIPT}
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+EOF
+
+chown "${ACTUAL_USER}:${ACTUAL_USER}" "$CAPTURE_SERVICE_FILE"
+chmod 644 "$CAPTURE_SERVICE_FILE"
+log "INFO" "imx500_capture.service written"
+
+################################################################################
+### 9. Write imx500_capture.timer
+################################################################################
+log "INFO" "Writing imx500_capture.timer..."
 
 cat > "$TIMER_FILE" << EOF
 [Unit]
 Description=IMX500 Capture Daily Restart Timer
-# Restart the capture service each morning before sunrise to pick up the
-# new day's sunrise/sunset times and clear any stale state.
 
 [Timer]
-# Fire at 03:00 local time daily (before earliest possible sunrise)
 OnCalendar=*-*-* 03:00:00
-# If the Pi was off at 03:00, fire as soon as it boots
 Persistent=true
 Unit=imx500_capture.service
 
@@ -420,66 +406,43 @@ EOF
 
 chown "${ACTUAL_USER}:${ACTUAL_USER}" "$TIMER_FILE"
 chmod 644 "$TIMER_FILE"
-log "INFO" "Timer unit written: $TIMER_FILE"
+log "INFO" "imx500_capture.timer written"
 
 ################################################################################
-### 9. Enable and Start Service and Timer
+### 10. Enable and Start Everything
 ################################################################################
 log "INFO" "Reloading systemd user daemon..."
 run_user_systemctl daemon-reload
-log "INFO" "Daemon reloaded"
 
-log "INFO" "Enabling imx500_capture.service..."
-if run_user_systemctl enable imx500_capture.service 2>&1 | tee -a "$LOG_FILE"; then
-    log "INFO" "Service enabled"
-else
-    log "ERROR" "Failed to enable service"
-    exit 1
-fi
+log "INFO" "Enabling and starting imx500_server.service..."
+run_user_systemctl enable imx500_server.service
+run_user_systemctl start  imx500_server.service
 
-log "INFO" "Enabling imx500_capture.timer..."
-if run_user_systemctl enable imx500_capture.timer 2>&1 | tee -a "$LOG_FILE"; then
-    log "INFO" "Timer enabled"
-else
-    log "ERROR" "Failed to enable timer"
-    exit 1
-fi
+log "INFO" "Enabling imx500_capture.service and timer..."
+run_user_systemctl enable imx500_capture.service
+run_user_systemctl enable imx500_capture.timer
+run_user_systemctl start  imx500_capture.timer
+run_user_systemctl start  imx500_capture.service
 
-log "INFO" "Starting imx500_capture.timer..."
-if run_user_systemctl start imx500_capture.timer 2>&1 | tee -a "$LOG_FILE"; then
-    log "INFO" "Timer started"
-else
-    log "ERROR" "Failed to start timer"
-    exit 1
-fi
+################################################################################
+### 11. Verify
+################################################################################
+sleep 3
 
-log "INFO" "Starting imx500_capture.service..."
-if run_user_systemctl start imx500_capture.service 2>&1 | tee -a "$LOG_FILE"; then
-    log "INFO" "Service started"
-else
-    log "ERROR" "Failed to start service"
-    exit 1
+SERVER_STATUS=$(run_user_systemctl is-active imx500_server.service  2>/dev/null || true)
+CAPTURE_STATUS=$(run_user_systemctl is-active imx500_capture.service 2>/dev/null || true)
+TIMER_STATUS=$(run_user_systemctl is-active  imx500_capture.timer   2>/dev/null || true)
+
+log "INFO" "imx500_server.service:  $SERVER_STATUS"
+log "INFO" "imx500_capture.service: $CAPTURE_STATUS"
+log "INFO" "imx500_capture.timer:   $TIMER_STATUS"
+
+if [[ "$SERVER_STATUS" != "active" ]]; then
+    log "WARN" "Server service does not appear active — check: systemctl --user status imx500_server.service"
 fi
 
 ################################################################################
-### 10. Verify Service Status
-################################################################################
-log "INFO" "Verifying service and timer status..."
-
-sleep 3  # Give systemd a moment to settle
-
-SERVICE_STATUS=$(run_user_systemctl is-active imx500_capture.service 2>/dev/null || true)
-TIMER_STATUS=$(run_user_systemctl is-active imx500_capture.timer  2>/dev/null || true)
-
-log "INFO" "Service status: $SERVICE_STATUS"
-log "INFO" "Timer status:   $TIMER_STATUS"
-
-if [[ "$TIMER_STATUS" != "active" ]]; then
-    log "WARN" "Timer does not appear to be active — check: systemctl --user status imx500_capture.timer"
-fi
-
-################################################################################
-### 11. Final Summary
+### 12. Final Summary
 ################################################################################
 echo ""
 log "INFO" "========================================="
@@ -489,14 +452,17 @@ log "INFO" "Script Version: $SCRIPT_VERSION"
 log "INFO" "User: $ACTUAL_USER"
 log "INFO" "Repo: $REPO_DIR"
 log "INFO" "Config: $CONFIG_JSON"
-log "INFO" "Service: $SERVICE_FILE"
-log "INFO" "Timer: $TIMER_FILE"
-log "INFO" "Log file: $LOG_FILE"
+log "INFO" "========================================="
+log "INFO" "Services:"
+log "INFO" "  imx500_server.service   — always-on, starts at boot"
+log "INFO" "  imx500_capture.service  — sunrise to sunset"
+log "INFO" "  imx500_capture.timer    — restarts capture at 03:00 daily"
 log "INFO" "========================================="
 log "INFO" "Useful commands:"
-log "INFO" "  Status:      systemctl --user status imx500_capture.service"
-log "INFO" "  Logs:        journalctl --user -u imx500_capture -f"
-log "INFO" "  Stop:        systemctl --user stop imx500_capture.service"
-log "INFO" "  Timer next:  systemctl --user list-timers imx500_capture.timer"
-log "INFO" "  Event log:   tail -f /var/log/imx500/events.jsonl"
+log "INFO" "  imx500 status imx500_server.service"
+log "INFO" "  imx500 status imx500_capture.service"
+log "INFO" "  imx500 list-timers imx500_capture.timer"
+log "INFO" "  journalctl --user -u imx500_server.service -f"
+log "INFO" "  journalctl --user -u imx500_capture.service -f"
+log "INFO" "  tail -f /var/log/imx500/events.jsonl"
 log "INFO" "========================================="

@@ -1,0 +1,361 @@
+#!/usr/bin/env python3
+"""
+imx500_capture.py — Camera capture, AI inference, and event logging.
+
+Runs sunrise-to-sunset under imx500_capture_wrapper.sh / imx500_capture.service.
+Sends annotated JPEG frames to imx500_server.py via a Unix domain socket so the
+always-on server can broadcast them to WebSocket clients.
+
+Wire format sent to FRAME_SOCKET (little-endian):
+    4 bytes  — uint32 payload length
+    N bytes  — JPEG data
+
+No HTTP or WebSocket server code lives here — that responsibility belongs
+entirely to imx500_server.py.
+"""
+
+import argparse
+import json
+import logging
+import socket
+import struct
+import sys
+import threading
+import time
+from datetime import datetime, timezone
+from functools import lru_cache
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
+
+import cv2
+from picamera2 import Picamera2
+from picamera2.devices import IMX500
+from picamera2.devices.imx500 import (NetworkIntrinsics,
+                                       postprocess_nanodet_detection)
+
+# ── Config ────────────────────────────────────────────────────────────────────
+FRAME_SOCKET = Path("/tmp/imx500_frames.sock")
+LOG_DIR      = Path("/var/log/imx500")
+LOG_DIR.mkdir(exist_ok=True)
+
+# Read max_log_files from config.json if present, default to 30
+_config_path = Path(__file__).parent / "config.json"
+try:
+    with open(_config_path) as _f:
+        _config = json.load(_f)
+    MAX_LOG_FILES = int(_config.get("logging", {}).get("max_log_files", 30))
+except Exception:
+    MAX_LOG_FILES = 30
+
+# ── Event logging ─────────────────────────────────────────────────────────────
+_event_logger = logging.getLogger("imx500.events")
+_event_logger.setLevel(logging.INFO)
+_event_logger.propagate = False
+
+_log_handler = TimedRotatingFileHandler(
+    filename    = LOG_DIR / "events.jsonl",
+    when        = "midnight",
+    interval    = 1,
+    backupCount = MAX_LOG_FILES,
+    encoding    = "utf-8",
+    utc         = False,
+)
+_log_handler.suffix = "%Y-%m-%d"
+_event_logger.addHandler(_log_handler)
+
+# ── Detection tracking state ──────────────────────────────────────────────────
+_tracked:      dict = {}
+_tracked_lock        = threading.Lock()
+_pending:      dict = {}
+_cooldown:     dict = {}
+
+MIN_CONSECUTIVE   = 5
+COOLDOWN_S        = 10
+SUPPRESSED_LABELS = {"airplane"}
+
+
+def _log_event(event: str, label: str, confidence: float,
+               bbox: tuple, track_key: str, dwell_s: float = None) -> None:
+    if event == "enter":
+        cooldown_key = (label, track_key)
+        last = _cooldown.get(cooldown_key, 0)
+        if time.monotonic() - last < COOLDOWN_S:
+            return
+        _cooldown[cooldown_key] = time.monotonic()
+
+    record = {
+        "ts":         datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "event":      event,
+        "label":      label,
+        "confidence": round(float(confidence), 3),
+        "bbox":       [int(v) for v in bbox],
+        "track_key":  track_key,
+    }
+    if dwell_s is not None:
+        record["dwell_s"] = round(dwell_s, 1)
+    _event_logger.info(json.dumps(record))
+
+
+def _bucket_key(x, y, divisor=6) -> str:
+    return f"{int(x) // divisor * divisor:04d}_{int(y) // divisor * divisor:04d}"
+
+
+def update_tracking(detections, labels) -> None:
+    global _pending, _tracked
+    current_keys = set()
+
+    for det in detections:
+        x, y, w, h = det.box
+        label = labels[int(det.category)]
+        if label in SUPPRESSED_LABELS:
+            continue
+        key = _bucket_key(x, y)
+        current_keys.add(key)
+
+        with _tracked_lock:
+            if key in _tracked:
+                _tracked[key]["conf"] = det.conf
+            else:
+                if key not in _pending:
+                    _pending[key] = {"label": label, "conf": det.conf,
+                                     "bbox": (x, y, w, h), "count": 0}
+                _pending[key]["count"] += 1
+
+                if _pending[key]["count"] >= MIN_CONSECUTIVE:
+                    _tracked[key] = {
+                        "label":    label,
+                        "conf":     det.conf,
+                        "bbox":     (x, y, w, h),
+                        "enter_ts": time.monotonic(),
+                    }
+                    _log_event("enter", label, det.conf, (x, y, w, h), key)
+                    del _pending[key]
+
+    with _tracked_lock:
+        gone = [k for k in _tracked if k not in current_keys]
+        for key in gone:
+            t = _tracked.pop(key)
+            dwell = time.monotonic() - t["enter_ts"]
+            _log_event("exit", t["label"], t["conf"], t["bbox"], key, dwell_s=dwell)
+
+        stale_pending = [k for k in _pending if k not in current_keys]
+        for key in stale_pending:
+            del _pending[key]
+
+
+# ── Unix socket frame sender ──────────────────────────────────────────────────
+_sock_conn      = None
+_sock_conn_lock = threading.Lock()
+
+
+def _connect_to_server() -> socket.socket | None:
+    """Try to connect to the server's frame socket. Returns socket or None."""
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(str(FRAME_SOCKET))
+        print(f"[capture] Connected to frame socket at {FRAME_SOCKET}")
+        return sock
+    except OSError as e:
+        print(f"[capture] Could not connect to frame socket: {e} — retrying...")
+        return None
+
+
+def send_frame(jpeg_bytes: bytes) -> None:
+    """Send a JPEG frame to the server via the Unix socket."""
+    global _sock_conn
+    with _sock_conn_lock:
+        if _sock_conn is None:
+            _sock_conn = _connect_to_server()
+        if _sock_conn is None:
+            return   # server not up yet — drop frame silently
+        try:
+            header = struct.pack("<I", len(jpeg_bytes))
+            _sock_conn.sendall(header + jpeg_bytes)
+        except OSError:
+            print("[capture] Frame socket send failed — reconnecting next frame")
+            try:
+                _sock_conn.close()
+            except OSError:
+                pass
+            _sock_conn = None
+
+
+def _socket_connect_loop() -> None:
+    """Background thread: keep trying to connect until the server socket appears."""
+    global _sock_conn
+    while True:
+        with _sock_conn_lock:
+            if _sock_conn is not None:
+                break
+            conn = _connect_to_server()
+            if conn is not None:
+                _sock_conn = conn
+                break
+        time.sleep(2)
+
+
+# ── Detection parsing ─────────────────────────────────────────────────────────
+last_detections = []
+
+
+class Detection:
+    def __init__(self, coords, category, conf, metadata):
+        self.category = category
+        self.conf     = conf
+        self.box      = imx500.convert_inference_coords(coords, metadata, picam2)
+
+
+def parse_detections(metadata: dict):
+    global last_detections
+    bbox_normalization = intrinsics.bbox_normalization
+    bbox_order         = intrinsics.bbox_order
+    threshold          = args.threshold
+    iou                = args.iou
+    max_detections     = args.max_detections
+
+    np_outputs = imx500.get_outputs(metadata, add_batch=True)
+    input_w, input_h = imx500.get_input_size()
+    if np_outputs is None:
+        return last_detections
+
+    if intrinsics.postprocess == "nanodet":
+        boxes, scores, classes = \
+            postprocess_nanodet_detection(outputs=np_outputs[0], conf=threshold,
+                                          iou_thres=iou, max_out_dets=max_detections)[0]
+        from picamera2.devices.imx500.postprocess import scale_boxes
+        boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+    else:
+        boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
+        if bbox_normalization:
+            boxes = boxes / input_h
+        if bbox_order == "xy":
+            boxes = boxes[:, [1, 0, 3, 2]]
+
+    last_detections = [
+        Detection(box, category, score, metadata)
+        for box, score, category in zip(boxes, scores, classes)
+        if score > threshold
+    ]
+    return last_detections
+
+
+@lru_cache
+def get_labels():
+    labels = intrinsics.labels
+    if intrinsics.ignore_dash_labels:
+        labels = [label for label in labels if label and label != "-"]
+    return labels
+
+
+def draw_detections(request, stream="main") -> None:
+    """Draw bounding boxes, update tracking, send frame to server."""
+    detections = last_results
+    if detections is None:
+        return
+    labels = get_labels()
+    frame  = request.make_array(stream)
+
+    for detection in detections:
+        x, y, w, h = detection.box
+        label = f"{labels[int(detection.category)]} ({detection.conf:.2f})"
+
+        (text_width, text_height), baseline = cv2.getTextSize(
+            label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        text_x = x + 5
+        text_y = y + 15
+
+        overlay = frame.copy()
+        cv2.rectangle(overlay,
+                      (text_x, text_y - text_height),
+                      (text_x + text_width, text_y + baseline),
+                      (255, 255, 255), cv2.FILLED)
+        cv2.addWeighted(overlay, 0.30, frame, 0.70, 0, frame)
+        cv2.putText(frame, label, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0, 0), thickness=2)
+
+    if intrinsics.preserve_aspect_ratio:
+        b_x, b_y, b_w, b_h = imx500.get_roi_scaled(request)
+        cv2.putText(frame, "ROI", (b_x + 5, b_y + 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+        cv2.rectangle(frame, (b_x, b_y), (b_x + b_w, b_y + b_h), (255, 0, 0, 0))
+
+    # Update event tracking and log enter/exit transitions
+    update_tracking(detections, labels)
+
+    # Encode and send to server
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+    if ok:
+        send_frame(buf.tobytes())
+
+
+# ── Argument parsing ──────────────────────────────────────────────────────────
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str,
+                        default="/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk")
+    parser.add_argument("--fps", type=int)
+    parser.add_argument("--bbox-normalization", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--bbox-order", choices=["yx", "xy"], default="yx")
+    parser.add_argument("--threshold", type=float, default=0.55)
+    parser.add_argument("--iou", type=float, default=0.65)
+    parser.add_argument("--max-detections", type=int, default=10)
+    parser.add_argument("--ignore-dash-labels", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--postprocess", choices=["", "nanodet"], default=None)
+    parser.add_argument("-r", "--preserve-aspect-ratio", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--labels", type=str)
+    parser.add_argument("--print-intrinsics", action="store_true")
+    return parser.parse_args()
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    args = get_args()
+
+    imx500 = IMX500(args.model)
+    intrinsics = imx500.network_intrinsics
+    if not intrinsics:
+        intrinsics = NetworkIntrinsics()
+        intrinsics.task = "object detection"
+    elif intrinsics.task != "object detection":
+        print("Network is not an object detection task", file=sys.stderr)
+        exit()
+
+    for key, value in vars(args).items():
+        if key == "labels" and value is not None:
+            with open(value, "r") as f:
+                intrinsics.labels = f.read().splitlines()
+        elif hasattr(intrinsics, key) and value is not None:
+            setattr(intrinsics, key, value)
+
+    if intrinsics.labels is None:
+        with open("assets/coco_labels.txt", "r") as f:
+            intrinsics.labels = f.read().splitlines()
+    intrinsics.update_with_defaults()
+
+    if args.print_intrinsics:
+        print(intrinsics)
+        exit()
+
+    # Start background thread to connect to server frame socket
+    threading.Thread(target=_socket_connect_loop, daemon=True).start()
+
+    print(f"[capture] Event log: {LOG_DIR / 'events.jsonl'}")
+    print(f"[capture] Sending frames to {FRAME_SOCKET}")
+
+    picam2 = Picamera2(imx500.camera_num)
+    config = picam2.create_preview_configuration(
+        controls={"FrameRate": intrinsics.inference_rate, "AwbMode": 5},
+        buffer_count=12,
+    )
+
+    imx500.show_network_fw_progress_bar()
+    picam2.start(config, show_preview=False)
+
+    if intrinsics.preserve_aspect_ratio:
+        imx500.set_auto_aspect_ratio()
+
+    last_results = None
+    picam2.pre_callback = draw_detections
+    while True:
+        last_results = parse_detections(picam2.capture_metadata())
