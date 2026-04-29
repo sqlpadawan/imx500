@@ -1,4 +1,16 @@
-# IMX500 Street Monitor Project
+# IMX500 Street Monitor
+
+Headless street activity monitor built on a Raspberry Pi Zero 2W and Sony IMX500 AI camera.
+Detects and logs vehicles, pedestrians, and other objects on a residential street using
+on-sensor inference (SSD MobileNetV2 FPN Lite, COCO labels). Runs automatically from
+sunrise to sunset, with a live WebSocket stream and a historical event dashboard
+available 24/7.
+
+**Hardware:** Raspberry Pi Zero 2W · Sony IMX500 AI Camera · M12 lens mount  
+**Model:** SSD MobileNetV2 FPN Lite 320×320 (on-sensor, no CPU inference load)  
+**Stack:** Python · picamera2 · OpenCV · websockets · systemd
+
+---
 
 ## Architecture
 
