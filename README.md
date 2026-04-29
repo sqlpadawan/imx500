@@ -6,7 +6,7 @@ on-sensor inference (SSD MobileNetV2 FPN Lite, COCO labels). Runs automatically 
 sunrise to sunset, with a live WebSocket stream and a historical event dashboard
 available 24/7.
 
-**Hardware:** Raspberry Pi Zero 2W · Sony IMX500 AI Camera · M12 lens mount  
+**Hardware:** Raspberry Pi Zero 2W · Sony IMX500 AI Camera
 **Model:** SSD MobileNetV2 FPN Lite 320×320 (on-sensor, no CPU inference load)  
 **Stack:** Python · picamera2 · OpenCV · websockets · systemd
 
