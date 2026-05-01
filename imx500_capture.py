@@ -69,8 +69,8 @@ _tracked_lock        = threading.Lock()
 _pending:      dict = {}
 _cooldown:     dict = {}
 
-MIN_CONSECUTIVE   = 5
-COOLDOWN_S        = 10
+MIN_CONSECUTIVE   = 2
+COOLDOWN_S        = 120
 SUPPRESSED_LABELS = {"airplane"}
 
 
@@ -297,7 +297,7 @@ def get_args():
     parser.add_argument("--fps", type=int)
     parser.add_argument("--bbox-normalization", action=argparse.BooleanOptionalAction)
     parser.add_argument("--bbox-order", choices=["yx", "xy"], default="yx")
-    parser.add_argument("--threshold", type=float, default=0.55)
+    parser.add_argument("--threshold", type=float, default=0.25)
     parser.add_argument("--iou", type=float, default=0.65)
     parser.add_argument("--max-detections", type=int, default=10)
     parser.add_argument("--ignore-dash-labels", action=argparse.BooleanOptionalAction)
