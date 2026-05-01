@@ -63,8 +63,8 @@ _event_logger.addHandler(_log_handler)
 _tracked: dict = {}
 _tracked_lock = threading.Lock()
 
-MIN_CONSECUTIVE   = 5                  # frames a detection must persist before logging "enter"
-COOLDOWN_S        = 10                 # seconds before the same label+zone can log another "enter"
+MIN_CONSECUTIVE   = 2                  # frames a detection must persist before logging "enter"
+COOLDOWN_S        = 120                # seconds before the same label+zone can log another "enter"
 SUPPRESSED_LABELS = {"airplane"}       # labels to ignore entirely
 _pending: dict    = {}                 # key → {"label", "conf", "bbox", "count"}
 _cooldown: dict   = {}                 # (label, track_key) → monotonic time of last "enter" log
@@ -409,7 +409,7 @@ def get_args():
     parser.add_argument("--bbox-normalization", action=argparse.BooleanOptionalAction, help="Normalize bbox")
     parser.add_argument("--bbox-order", choices=["yx", "xy"], default="yx",
                         help="Set bbox order yx -> (y0, x0, y1, x1) xy -> (x0, y0, x1, y1)")
-    parser.add_argument("--threshold", type=float, default=0.55, help="Detection threshold")
+    parser.add_argument("--threshold", type=float, default=0.45, help="Detection threshold")
     parser.add_argument("--iou", type=float, default=0.65, help="Set iou threshold")
     parser.add_argument("--max-detections", type=int, default=10, help="Set max detections")
     parser.add_argument("--ignore-dash-labels", action=argparse.BooleanOptionalAction, help="Remove '-' labels ")
