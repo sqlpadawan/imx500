@@ -85,10 +85,10 @@ _event_logger.addHandler(_log_handler)
 
 import uuid as _uuid_mod
 
-MAX_DIST          = 120   # px
+MAX_DIST          = 160   # px
 MIN_CONSECUTIVE   = 2
-MAX_MISSED        = 4     # ~4 frames grace for occlusion / model miss
-COOLDOWN_S        = 120
+MAX_MISSED        = 8     # frames grace for occlusion / model miss
+COOLDOWN_S        = 10
 SUPPRESSED_LABELS = {"airplane"}
 
 # Labels collapsed to a single normalized name.
