@@ -64,24 +64,64 @@ _log_handler.suffix = "%Y-%m-%d"
 _event_logger.addHandler(_log_handler)
 
 # ── Detection tracking state ──────────────────────────────────────────────────
-_tracked:      dict = {}
-_tracked_lock        = threading.Lock()
-_pending:      dict = {}
-_cooldown:     dict = {}
+# Proximity-based tracker: each object gets a UUID that persists as it moves
+# across the frame, rather than a fixed positional bucket key.
+#
+# Tuning parameters:
+#   MAX_DIST        — max pixel distance (bbox center) to match a detection to
+#                     an existing track. Should be larger than the distance an
+#                     object moves between frames at street speed.
+#   MIN_CONSECUTIVE — frames a new detection must appear before logging "enter"
+#   MAX_MISSED      — frames a track can go unmatched before logging "exit"
+#   COOLDOWN_S      — seconds before the same label can log another "enter"
+#                     (per-label, not per-object — prevents re-logging the same
+#                     vehicle type driving past multiple times in quick succession)
 
+import uuid as _uuid_mod
+
+MAX_DIST          = 120   # px — generous to handle fast-moving vehicles
 MIN_CONSECUTIVE   = 2
+MAX_MISSED        = 4     # ~4 frames of grace for brief occlusion/miss
 COOLDOWN_S        = 120
 SUPPRESSED_LABELS = {"airplane"}
+
+# _tracked: track_id → {label, conf, cx, cy, bbox, enter_ts, missed}
+# _pending: temp_id  → {label, conf, cx, cy, bbox, count}
+_tracked:      dict = {}
+_pending:      dict = {}
+_cooldown:     dict = {}
+_tracked_lock        = threading.Lock()
+
+
+def _bbox_center(x, y, w, h) -> tuple[float, float]:
+    return x + w / 2, y + h / 2
+
+
+def _center_dist(cx1, cy1, cx2, cy2) -> float:
+    return ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
+
+
+def _find_nearest(pool: dict, label: str, cx: float, cy: float) -> str | None:
+    """Return the key of the nearest same-label entry within MAX_DIST, or None."""
+    best_key  = None
+    best_dist = MAX_DIST
+    for key, obj in pool.items():
+        if obj["label"] != label:
+            continue
+        d = _center_dist(cx, cy, obj["cx"], obj["cy"])
+        if d < best_dist:
+            best_dist = d
+            best_key  = key
+    return best_key
 
 
 def _log_event(event: str, label: str, confidence: float,
                bbox: tuple, track_key: str, dwell_s: float = None) -> None:
     if event == "enter":
-        cooldown_key = (label, track_key)
-        last = _cooldown.get(cooldown_key, 0)
+        last = _cooldown.get(label, 0)
         if time.monotonic() - last < COOLDOWN_S:
             return
-        _cooldown[cooldown_key] = time.monotonic()
+        _cooldown[label] = time.monotonic()
 
     record = {
         "ts":         datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
@@ -96,51 +136,72 @@ def _log_event(event: str, label: str, confidence: float,
     _event_logger.info(json.dumps(record))
 
 
-def _bucket_key(x, y, divisor=64) -> str:
-    return f"{int(x) // divisor * divisor:04d}_{int(y) // divisor * divisor:04d}"
-
-
 def update_tracking(detections, labels) -> None:
-    global _pending, _tracked
-    current_keys = set()
-
-    for det in detections:
-        x, y, w, h = det.box
-        label = labels[int(det.category)]
-        if label in SUPPRESSED_LABELS:
-            continue
-        key = _bucket_key(x, y)
-        current_keys.add(key)
-
-        with _tracked_lock:
-            if key in _tracked:
-                _tracked[key]["conf"] = det.conf
-            else:
-                if key not in _pending:
-                    _pending[key] = {"label": label, "conf": det.conf,
-                                     "bbox": (x, y, w, h), "count": 0}
-                _pending[key]["count"] += 1
-
-                if _pending[key]["count"] >= MIN_CONSECUTIVE:
-                    _tracked[key] = {
-                        "label":    label,
-                        "conf":     det.conf,
-                        "bbox":     (x, y, w, h),
-                        "enter_ts": time.monotonic(),
-                    }
-                    _log_event("enter", label, det.conf, (x, y, w, h), key)
-                    del _pending[key]
-
+    """Match detections to existing tracks by proximity, log enter/exit events."""
     with _tracked_lock:
-        gone = [k for k in _tracked if k not in current_keys]
-        for key in gone:
-            t = _tracked.pop(key)
-            dwell = time.monotonic() - t["enter_ts"]
-            _log_event("exit", t["label"], t["conf"], t["bbox"], key, dwell_s=dwell)
+        matched_track_ids   = set()
+        matched_pending_ids = set()
 
-        stale_pending = [k for k in _pending if k not in current_keys]
-        for key in stale_pending:
-            del _pending[key]
+        for det in detections:
+            x, y, w, h = det.box
+            label = labels[int(det.category)]
+            if label in SUPPRESSED_LABELS:
+                continue
+            cx, cy = _bbox_center(x, y, w, h)
+
+            # 1. Try to match to a confirmed track
+            tid = _find_nearest(_tracked, label, cx, cy)
+            if tid is not None:
+                _tracked[tid].update(conf=det.conf, cx=cx, cy=cy,
+                                     bbox=(x, y, w, h), missed=0)
+                matched_track_ids.add(tid)
+                continue
+
+            # 2. Try to match to a pending candidate
+            pid = _find_nearest(_pending, label, cx, cy)
+            if pid is not None:
+                _pending[pid].update(conf=det.conf, cx=cx, cy=cy,
+                                     bbox=(x, y, w, h))
+                _pending[pid]["count"] += 1
+                matched_pending_ids.add(pid)
+            else:
+                # 3. New candidate
+                pid = str(_uuid_mod.uuid4())[:8]
+                _pending[pid] = {"label": label, "conf": det.conf,
+                                 "cx": cx, "cy": cy, "bbox": (x, y, w, h),
+                                 "count": 1}
+                matched_pending_ids.add(pid)
+
+            # Promote pending → confirmed after MIN_CONSECUTIVE frames
+            if pid in _pending and _pending[pid]["count"] >= MIN_CONSECUTIVE:
+                obj = _pending.pop(pid)
+                tid = str(_uuid_mod.uuid4())[:8]
+                _tracked[tid] = {
+                    "label":    obj["label"],
+                    "conf":     obj["conf"],
+                    "cx":       obj["cx"],
+                    "cy":       obj["cy"],
+                    "bbox":     obj["bbox"],
+                    "enter_ts": time.monotonic(),
+                    "missed":   0,
+                }
+                _log_event("enter", obj["label"], obj["conf"], obj["bbox"], tid)
+                matched_track_ids.add(tid)
+
+        # Increment missed counter for unmatched confirmed tracks
+        for tid in list(_tracked):
+            if tid not in matched_track_ids:
+                _tracked[tid]["missed"] += 1
+                if _tracked[tid]["missed"] > MAX_MISSED:
+                    t = _tracked.pop(tid)
+                    dwell = time.monotonic() - t["enter_ts"]
+                    _log_event("exit", t["label"], t["conf"], t["bbox"],
+                               tid, dwell_s=dwell)
+
+        # Drop stale pending candidates that weren't seen this frame
+        for pid in list(_pending):
+            if pid not in matched_pending_ids:
+                del _pending[pid]
 
 
 # ── Unix socket frame sender ──────────────────────────────────────────────────
