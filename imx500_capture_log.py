@@ -63,7 +63,7 @@ _event_logger.addHandler(_log_handler)
 _tracked: dict = {}
 _tracked_lock = threading.Lock()
 
-MIN_CONSECUTIVE   = 2                  # frames a detection must persist before logging "enter"
+MIN_CONSECUTIVE   = 1                  # frames a detection must persist before logging "enter"
 COOLDOWN_S        = 120                # seconds before the same label+zone can log another "enter"
 SUPPRESSED_LABELS = {"airplane"}       # labels to ignore entirely
 _pending: dict    = {}                 # key → {"label", "conf", "bbox", "count"}
