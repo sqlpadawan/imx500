@@ -96,7 +96,7 @@ def _log_event(event: str, label: str, confidence: float,
     _event_logger.info(json.dumps(record))
 
 
-def _bucket_key(x, y, divisor=6) -> str:
+def _bucket_key(x, y, divisor=64) -> str:
     return f"{int(x) // divisor * divisor:04d}_{int(y) // divisor * divisor:04d}"
 
 
