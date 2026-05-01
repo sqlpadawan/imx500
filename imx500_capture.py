@@ -65,25 +65,38 @@ _event_logger.addHandler(_log_handler)
 
 # ── Detection tracking state ──────────────────────────────────────────────────
 # Proximity-based tracker: each object gets a UUID that persists as it moves
-# across the frame, rather than a fixed positional bucket key.
+# across the frame, regardless of label flips between frames.
+#
+# Key design decisions:
+#   - Confirmed tracks are matched by proximity ONLY (no label requirement).
+#     A car/truck flip on the same moving object won't break the track.
+#   - Pending candidates are matched by proximity + same label group, so two
+#     genuinely different objects close together don't merge before confirmation.
+#   - Raw model labels are normalized before use: "car" and "truck" both become
+#     "vehicle" since SSD MobileNetV2 routinely confuses them on street scenes.
 #
 # Tuning parameters:
-#   MAX_DIST        — max pixel distance (bbox center) to match a detection to
-#                     an existing track. Should be larger than the distance an
-#                     object moves between frames at street speed.
+#   MAX_DIST        — max bbox-center distance (px) to match a detection to an
+#                     existing track. Should comfortably exceed per-frame
+#                     movement at street speed.
 #   MIN_CONSECUTIVE — frames a new detection must appear before logging "enter"
-#   MAX_MISSED      — frames a track can go unmatched before logging "exit"
-#   COOLDOWN_S      — seconds before the same label can log another "enter"
-#                     (per-label, not per-object — prevents re-logging the same
-#                     vehicle type driving past multiple times in quick succession)
+#   MAX_MISSED      — frames a confirmed track can go unmatched before "exit"
+#   COOLDOWN_S      — minimum seconds between "enter" events for the same label
 
 import uuid as _uuid_mod
 
-MAX_DIST          = 120   # px — generous to handle fast-moving vehicles
+MAX_DIST          = 120   # px
 MIN_CONSECUTIVE   = 2
-MAX_MISSED        = 4     # ~4 frames of grace for brief occlusion/miss
+MAX_MISSED        = 4     # ~4 frames grace for occlusion / model miss
 COOLDOWN_S        = 120
 SUPPRESSED_LABELS = {"airplane"}
+
+# Labels collapsed to a single normalized name.
+# Extend this dict for any other pairs the model confuses on your scene.
+LABEL_NORMALIZE: dict[str, str] = {
+    "car":   "vehicle",
+    "truck": "vehicle",
+}
 
 # _tracked: track_id → {label, conf, cx, cy, bbox, enter_ts, missed}
 # _pending: temp_id  → {label, conf, cx, cy, bbox, count}
@@ -91,6 +104,10 @@ _tracked:      dict = {}
 _pending:      dict = {}
 _cooldown:     dict = {}
 _tracked_lock        = threading.Lock()
+
+
+def _normalize_label(raw: str) -> str:
+    return LABEL_NORMALIZE.get(raw, raw)
 
 
 def _bbox_center(x, y, w, h) -> tuple[float, float]:
@@ -101,8 +118,20 @@ def _center_dist(cx1, cy1, cx2, cy2) -> float:
     return ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
 
 
-def _find_nearest(pool: dict, label: str, cx: float, cy: float) -> str | None:
-    """Return the key of the nearest same-label entry within MAX_DIST, or None."""
+def _find_nearest_any(pool: dict, cx: float, cy: float) -> str | None:
+    """Nearest entry regardless of label — used for confirmed track matching."""
+    best_key  = None
+    best_dist = MAX_DIST
+    for key, obj in pool.items():
+        d = _center_dist(cx, cy, obj["cx"], obj["cy"])
+        if d < best_dist:
+            best_dist = d
+            best_key  = key
+    return best_key
+
+
+def _find_nearest_same_label(pool: dict, label: str, cx: float, cy: float) -> str | None:
+    """Nearest same-label entry — used for pending candidate matching."""
     best_key  = None
     best_dist = MAX_DIST
     for key, obj in pool.items():
@@ -144,21 +173,22 @@ def update_tracking(detections, labels) -> None:
 
         for det in detections:
             x, y, w, h = det.box
-            label = labels[int(det.category)]
-            if label in SUPPRESSED_LABELS:
+            raw_label = labels[int(det.category)]
+            if raw_label in SUPPRESSED_LABELS:
                 continue
+            label  = _normalize_label(raw_label)
             cx, cy = _bbox_center(x, y, w, h)
 
-            # 1. Try to match to a confirmed track
-            tid = _find_nearest(_tracked, label, cx, cy)
+            # 1. Try to match to a confirmed track (label-agnostic)
+            tid = _find_nearest_any(_tracked, cx, cy)
             if tid is not None:
                 _tracked[tid].update(conf=det.conf, cx=cx, cy=cy,
                                      bbox=(x, y, w, h), missed=0)
                 matched_track_ids.add(tid)
                 continue
 
-            # 2. Try to match to a pending candidate
-            pid = _find_nearest(_pending, label, cx, cy)
+            # 2. Try to match to a pending candidate (same normalized label)
+            pid = _find_nearest_same_label(_pending, label, cx, cy)
             if pid is not None:
                 _pending[pid].update(conf=det.conf, cx=cx, cy=cy,
                                      bbox=(x, y, w, h))
