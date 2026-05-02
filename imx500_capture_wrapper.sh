@@ -147,24 +147,33 @@ log "INFO" "Building event summary for dashboard..."
     || log "WARN" "build_summary.py failed — dashboard may show stale data"
 
 # ── Launch capture script, kill at sunset ────────────────────────────────────
-log "INFO" "Starting imx500_capture.py..."
+# ── Launch capture script, restart on crash, kill at sunset ──────────────────
+while true; do
+    NOW_EPOCH=$(date +%s)
+    if [[ $NOW_EPOCH -ge $SUNSET_EPOCH ]]; then
+        log "INFO" "Sunset reached — exiting"
+        exit 0
+    fi
 
-"$VENV_PYTHON" "$CAPTURE_SCRIPT" &
-CAPTURE_PID=$!
+    log "INFO" "Starting imx500_capture.py..."
+    "$VENV_PYTHON" "$CAPTURE_SCRIPT" &
+    CAPTURE_PID=$!
+    log "INFO" "Capture PID: ${CAPTURE_PID}"
 
-log "INFO" "Capture PID: ${CAPTURE_PID}"
+    # Wait for either the capture script to exit or sunset
+    while kill -0 "$CAPTURE_PID" 2>/dev/null; do
+        if [[ $(date +%s) -ge $SUNSET_EPOCH ]]; then
+            log "INFO" "Sunset reached — stopping capture"
+            kill -TERM "$CAPTURE_PID" 2>/dev/null || true
+            sleep 3
+            kill -KILL "$CAPTURE_PID" 2>/dev/null || true
+            log "INFO" "Capture stopped at sunset"
+            exit 0
+        fi
+        sleep 5
+    done
 
-sleep "$RUN_S"
+    log "WARN" "Capture script exited unexpectedly — restarting in 10s"
+    sleep 10
+done
 
-if kill -0 "$CAPTURE_PID" 2>/dev/null; then
-    log "INFO" "Sunset reached — stopping capture"
-    kill -TERM "$CAPTURE_PID" 2>/dev/null || true
-    sleep 3
-    kill -KILL "$CAPTURE_PID" 2>/dev/null || true
-    log "INFO" "Capture stopped at sunset"
-else
-    log "WARN" "Capture script exited before sunset"
-fi
-
-log "INFO" "Wrapper exiting cleanly"
-exit 0

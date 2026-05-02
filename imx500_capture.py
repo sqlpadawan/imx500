@@ -173,6 +173,10 @@ def update_tracking(detections, labels) -> None:
 
         for det in detections:
             x, y, w, h = det.box
+            if w * h < 400:   # skip implausibly small detections
+                continue
+            if w > 400 or h > 300:  # too large — background element
+                continue
             raw_label = labels[int(det.category)]
             if raw_label in SUPPRESSED_LABELS:
                 continue
@@ -388,7 +392,7 @@ def get_args():
     parser.add_argument("--fps", type=int)
     parser.add_argument("--bbox-normalization", action=argparse.BooleanOptionalAction)
     parser.add_argument("--bbox-order", choices=["yx", "xy"], default="yx")
-    parser.add_argument("--threshold", type=float, default=0.25)
+    parser.add_argument("--threshold", type=float, default=0.30)
     parser.add_argument("--iou", type=float, default=0.65)
     parser.add_argument("--max-detections", type=int, default=10)
     parser.add_argument("--ignore-dash-labels", action=argparse.BooleanOptionalAction)
