@@ -89,7 +89,7 @@ MAX_DIST          = 160   # px
 MIN_CONSECUTIVE   = 2
 MAX_MISSED        = 8     # frames grace for occlusion / model miss
 COOLDOWN_S        = 10
-SUPPRESSED_LABELS = {"airplane"}
+SUPPRESSED_LABELS = {"airplane", "boat", "sheep", "umbrella", "keyboard", "train"}
 
 # Labels collapsed to a single normalized name.
 # Extend this dict for any other pairs the model confuses on your scene.
@@ -392,7 +392,7 @@ def get_args():
     parser.add_argument("--fps", type=int)
     parser.add_argument("--bbox-normalization", action=argparse.BooleanOptionalAction)
     parser.add_argument("--bbox-order", choices=["yx", "xy"], default="yx")
-    parser.add_argument("--threshold", type=float, default=0.35)
+    parser.add_argument("--threshold", type=float, default=0.40)
     parser.add_argument("--iou", type=float, default=0.65)
     parser.add_argument("--max-detections", type=int, default=10)
     parser.add_argument("--ignore-dash-labels", action=argparse.BooleanOptionalAction)
