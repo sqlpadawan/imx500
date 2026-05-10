@@ -361,22 +361,6 @@ create_virtual_environment() {
 }
 
 ################################################################################
-### Upgrade Pip
-################################################################################
-upgrade_pip() {
-    log "INFO" "Upgrading pip..."
-
-    if sudo -u "$ACTUAL_USER" bash -c "source '$VENV_DIR/bin/activate' && python3 -m pip install --upgrade pip 2>&1" | tee -a "$LOG_FILE"; then
-        local pip_version
-        pip_version=$(sudo -u "$ACTUAL_USER" bash -c "source '$VENV_DIR/bin/activate' && python3 -m pip --version" | awk '{print $2}')
-        log "INFO" "pip upgraded to version $pip_version"
-    else
-        log "ERROR" "Failed to upgrade pip"
-        return 1
-    fi
-}
-
-################################################################################
 ### Install Python Packages
 ################################################################################
 install_python_packages() {
@@ -545,12 +529,6 @@ fi
 ### Create virtual environment
 if ! create_virtual_environment; then
     log "ERROR" "Virtual environment creation failed"
-    exit 1
-fi
-
-### Upgrade pip
-if ! upgrade_pip; then
-    log "ERROR" "Pip upgrade failed"
     exit 1
 fi
 
