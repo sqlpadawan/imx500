@@ -425,7 +425,23 @@ run_user_systemctl start  imx500_capture.timer
 run_user_systemctl start  imx500_capture.service
 
 ################################################################################
-### 11. Verify
+### 11. Add Service Alias to ~/.bashrc
+################################################################################
+BASHRC="${ACTUAL_HOME}/.bashrc"
+ALIAS_LINE="alias imx500='XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user'"
+
+if grep -qF "alias imx500=" "$BASHRC" 2>/dev/null; then
+    log "INFO" "imx500 alias already present in $BASHRC"
+else
+    echo "" >> "$BASHRC"
+    echo "# IMX500 service alias" >> "$BASHRC"
+    echo "$ALIAS_LINE" >> "$BASHRC"
+    chown "${ACTUAL_USER}:${ACTUAL_USER}" "$BASHRC"
+    log "INFO" "Added imx500 alias to $BASHRC"
+fi
+
+################################################################################
+### 12. Verify
 ################################################################################
 sleep 3
 
@@ -442,7 +458,7 @@ if [[ "$SERVER_STATUS" != "active" ]]; then
 fi
 
 ################################################################################
-### 12. Final Summary
+### 13. Final Summary
 ################################################################################
 echo ""
 log "INFO" "========================================="
@@ -457,6 +473,10 @@ log "INFO" "Services:"
 log "INFO" "  imx500_server.service   — always-on, starts at boot"
 log "INFO" "  imx500_capture.service  — sunrise to sunset"
 log "INFO" "  imx500_capture.timer    — restarts capture at 03:00 daily"
+log "INFO" "========================================="
+log "INFO" "Service alias added to ~/.bashrc:"
+log "INFO" "  alias imx500='XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user'"
+log "INFO" "  As your regular user (not root), run: source ~/.bashrc"
 log "INFO" "========================================="
 log "INFO" "Useful commands:"
 log "INFO" "  imx500 status imx500_server.service"

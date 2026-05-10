@@ -33,17 +33,16 @@ readonly LOG_DIR="/var/log/imx500"
 readonly LOG_FILE="${LOG_DIR}/imx500pi_provision.log"
 readonly MIN_DISK_SPACE_MB=2048  # Minimum 2GB free (models + logs are large)
 
+# Ensure log directory exists before the first log() call — including any
+# failures that occur before argument validation completes. Section 8 sets
+# final ownership and permissions once the target username is known.
+mkdir -p "$LOG_DIR"
+
 ### Standardized logging function
 log() {
     local level="$1"
     shift
     local message="$@"
-
-    # Create log directory if it doesn't exist
-    if [[ ! -d "$LOG_DIR" ]]; then
-        mkdir -p "$LOG_DIR"
-    fi
-
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$level] $message" | tee -a "$LOG_FILE"
 }
 
@@ -444,7 +443,7 @@ log "INFO" "PROVISIONING COMPLETE"
 log "INFO" "========================================="
 log "INFO" "Script Version: $SCRIPT_VERSION"
 log "INFO" "User: $USERNAME"
-log "INFO" "Camera Interface: Enabled (camera_auto_detect=1)"
+log "INFO" "Camera Interface: Enabled"
 log "INFO" "I2C: Enabled"
 log "INFO" "Video Group: $USERNAME added"
 log "INFO" "WiFi Power Saving: Disabled"

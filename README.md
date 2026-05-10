@@ -12,6 +12,29 @@ available 24/7.
 
 ---
 
+## Requirements
+
+### Hardware
+
+- Raspberry Pi Zero 2W (or Pi 4 / Pi 5)
+- Sony IMX500 AI Camera connected via CSI ribbon cable
+- MicroSD card (16GB or larger recommended)
+- Power supply appropriate for your Pi model
+- WiFi or Ethernet connectivity
+
+### Software
+
+- Raspberry Pi OS Debian Trixie (headless, 64-bit recommended)
+- Internet connection during provisioning (for package installation)
+- A computer with SSH access to the Pi
+
+### Disk Space
+
+At least 2GB free on the Pi after OS installation. The IMX500 model firmware
+and Python packages are large downloads.
+
+---
+
 ## Architecture
 
 The system runs as two independent systemd services:
@@ -59,42 +82,10 @@ sudo apt install git -y
 git --version
 ```
 
-### Configure Git Identity
-```bash
-git config --global user.name "Your Name"
-git config --global user.email "your_email@example.com"
-git config --global --list
-```
-
-### SSH Key Authentication
-
-Generate an SSH key:
-```bash
-ssh-keygen -t ed25519 -C "your_email@example.com" -f ~/.ssh/id_ed25519_github
-```
-
-Display the public key and paste it into your GitHub account's SSH key settings:
-```bash
-cat ~/.ssh/id_ed25519_github.pub
-```
-
-Test the connection:
-```bash
-ssh -T git@github.com
-```
-
-Add an entry to `~/.ssh/config`:
-```
-Host github.com
-    HostName github.com
-    User git
-    IdentityFile ~/.ssh/id_ed25519_github
-```
-
 ### Clone the Repository
 ```bash
 cd ~
-git clone git@github.com:USERNAME/imx500.git
+git clone https://github.com/USERNAME/imx500.git
 ```
 
 ### Prevent Permission Change Conflicts
@@ -131,7 +122,7 @@ sudo ./imx500pi_provision_service.sh
 |---|---|
 | `imx500pi_provision.sh` | Base OS: camera interface, I2C, GPU memory, log directory, WiFi power saving |
 | `imx500pi_provision_python.sh` | Python venv with all required packages |
-| `imx500pi_provision_service.sh` | Location config, systemd service units, start everything |
+| `imx500pi_provision_service.sh` | Location config, systemd service units, service alias, start everything |
 
 ### Re-Provisioning
 
@@ -143,6 +134,41 @@ before making any changes.
 | `imx500pi_provision.sh` | Skips already-applied changes, re-applies missing ones |
 | `imx500pi_provision_python.sh` | Skips installed packages and existing venv; use `--reset` to rebuild venv |
 | `imx500pi_provision_service.sh` | Stops services, rewrites unit files, restarts; use `--reset` to reconfigure location |
+
+---
+
+## Service Aliases
+
+`systemctl --user` requires `XDG_RUNTIME_DIR` to be set when run via sudo or
+from certain shell contexts. The service provisioning script adds this alias
+to `~/.bashrc` automatically:
+
+```bash
+alias imx500='XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user'
+```
+
+Open a new shell (or run `source ~/.bashrc`) after provisioning to activate it.
+
+### Useful Service Commands
+
+All commands below assume the `imx500` alias is configured. If not, prefix
+each `systemctl --user` call with `XDG_RUNTIME_DIR=/run/user/$(id -u)`.
+
+| Action | Command |
+|---|---|
+| Start server | `imx500 start imx500_server.service` |
+| Stop server | `imx500 stop imx500_server.service` |
+| Restart server | `imx500 restart imx500_server.service` |
+| Server status | `imx500 status imx500_server.service` |
+| Start capture | `imx500 start imx500_capture.service` |
+| Stop capture | `imx500 stop imx500_capture.service` |
+| Restart capture | `imx500 restart imx500_capture.service` |
+| Capture status | `imx500 status imx500_capture.service` |
+| Timer status | `imx500 list-timers imx500_capture.timer` |
+| Server journal | `journalctl --user -u imx500_server.service -f` |
+| Capture journal | `journalctl --user -u imx500_capture.service -f` |
+| Event log | `tail -f /var/log/imx500/events.jsonl` |
+| Wrapper log | `tail -f /var/log/imx500/wrapper.log` |
 
 ---
 
@@ -169,40 +195,6 @@ Follow the journal for each service:
 journalctl --user -u imx500_server.service -f
 journalctl --user -u imx500_capture.service -f
 ```
-
----
-
-## Service Aliases
-
-`systemctl --user` requires `XDG_RUNTIME_DIR` to be set when run via sudo or
-from certain shell contexts. Add this alias to `~/.bashrc` to avoid typing
-the full prefix every time:
-
-```bash
-echo "alias imx500='XDG_RUNTIME_DIR=/run/user/\$(id -u) systemctl --user'" >> ~/.bashrc
-source ~/.bashrc
-```
-
-### Useful Service Commands
-
-All commands below assume the `imx500` alias is configured. If not, prefix
-each `systemctl --user` call with `XDG_RUNTIME_DIR=/run/user/$(id -u)`.
-
-| Action | Command |
-|---|---|
-| Start server | `imx500 start imx500_server.service` |
-| Stop server | `imx500 stop imx500_server.service` |
-| Restart server | `imx500 restart imx500_server.service` |
-| Server status | `imx500 status imx500_server.service` |
-| Start capture | `imx500 start imx500_capture.service` |
-| Stop capture | `imx500 stop imx500_capture.service` |
-| Restart capture | `imx500 restart imx500_capture.service` |
-| Capture status | `imx500 status imx500_capture.service` |
-| Timer status | `imx500 list-timers imx500_capture.timer` |
-| Server journal | `journalctl --user -u imx500_server.service -f` |
-| Capture journal | `journalctl --user -u imx500_capture.service -f` |
-| Event log | `tail -f /var/log/imx500/events.jsonl` |
-| Wrapper log | `tail -f /var/log/imx500/wrapper.log` |
 
 ---
 
