@@ -71,13 +71,6 @@ sudo apt upgrade -y
 sudo reboot
 ```
 
-### Enable Remote Access
-After the reboot, enable RPI Connect so the Pi is reachable without a monitor:
-```bash
-rpi-connect on
-rpi-connect signin
-```
-
 ### Install Git
 ```bash
 sudo apt install git -y
