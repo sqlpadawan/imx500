@@ -90,6 +90,7 @@ tracks as a file change and blocks future pulls. Disable permission tracking
 in this repo so that doesn't happen:
 
 ```bash
+cd ~/imx500
 git config core.fileMode false
 ```
 
@@ -106,7 +107,8 @@ Run the three provisioning scripts in order. The first script ends with a reboot
 cd ~/imx500
 chmod +x *.sh
 sudo ./imx500pi_provision.sh <username>
-# --- system reboots ---
+# --- reboot to apply boot config changes ---
+sudo reboot
 sudo ./imx500pi_provision_python.sh
 sudo ./imx500pi_provision_service.sh
 ```

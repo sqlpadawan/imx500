@@ -237,18 +237,9 @@ log "INFO" "Log Rotation: Configured"
 log "INFO" "Log file: $LOG_FILE"
 log "INFO" "Config backup: $BACKUP_FILE"
 log "INFO" "========================================="
-log "INFO" "Next steps after reboot:"
-log "INFO" "  1. Verify camera: python3 -c 'import libcamera; print(libcamera.__version__)'"
-log "INFO" "  2. Run Python provisioning script: sudo ./imx500pi_provision_python.sh"
-log "INFO" "  3. Run service provisioning script: sudo ./imx500pi_provision_service.sh"
+log "INFO" "Next steps:"
+log "INFO" "  1. Reboot to apply boot config changes: sudo reboot"
+log "INFO" "  2. After reboot, verify camera: python3 -c 'import libcamera; print(libcamera.__version__)'"
+log "INFO" "  3. Run Python provisioning script: sudo ./imx500pi_provision_python.sh"
+log "INFO" "  4. Run service provisioning script: sudo ./imx500pi_provision_service.sh"
 log "INFO" "========================================="
-
-echo ""
-
-# Prompt for reboot
-log "INFO" "System will reboot in 10 seconds to apply changes..."
-log "INFO" "Press Ctrl+C to cancel reboot and review changes"
-sleep 10
-
-log "INFO" "Rebooting now..."
-reboot
