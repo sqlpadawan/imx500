@@ -52,6 +52,7 @@ readonly DEFAULT_APT_PACKAGES=(
     "python3-venv"
     "python3-dev"
     "build-essential"
+    "python3-libcamera"        # Headless-safe libcamera Python bindings (no display deps)
     "python3-picamera2"        # Picamera2 Python library + IMX500 device support
     "imx500-all"               # IMX500 firmware, models, and postprocessing tools
 )
@@ -59,7 +60,7 @@ readonly DEFAULT_APT_PACKAGES=(
 # pip packages installed into the venv
 readonly DEFAULT_REQUIREMENTS=(
     "opencv-python-headless"   # OpenCV without Qt/display deps (headless Pi)
-    "websockets"               # WebSocket server for live stream (imx500_capture_log.py)
+    "websockets"               # WebSocket server for live stream (imx500_capture.py)
     "astral"                   # Sunrise/sunset calculation for daylight-only operation
     "pgeocode"                 # Offline zip code to lat/long resolution (no API key needed)
 )
@@ -243,6 +244,7 @@ reset_environment() {
 ################################################################################
 install_system_packages() {
     log "INFO" "Installing system packages..."
+    export DEBIAN_FRONTEND=noninteractive
 
     log "INFO" "Updating package lists..."
     local max_retries=3
@@ -406,6 +408,15 @@ install_python_packages() {
 ################################################################################
 verify_packages() {
     log "INFO" "Verifying critical package installations..."
+
+    # Verify python3-libcamera (apt-installed, visible via --system-site-packages)
+    log "INFO" "Checking libcamera..."
+    if sudo -u "$ACTUAL_USER" bash -c "source '$VENV_DIR/bin/activate' && python3 -c 'import libcamera; print(\"libcamera version:\", libcamera.__version__)'" 2>&1 | tee -a "$LOG_FILE"; then
+        log "INFO" "libcamera verified"
+    else
+        log "ERROR" "libcamera not importable — ensure python3-libcamera is installed and venv uses --system-site-packages"
+        return 1
+    fi
 
     # Verify picamera2 (apt-installed, visible via --system-site-packages)
     log "INFO" "Checking picamera2..."

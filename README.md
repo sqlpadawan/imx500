@@ -63,6 +63,8 @@ remains accessible and the live view shows "waiting for camera..."
 ## Git Setup on Raspberry Pi OS Debian Trixie (Headless)
 
 ### Update the System
+
+Before cloning the repo, make sure the OS is fully up to date:
 ```bash
 sudo apt update
 sudo apt upgrade -y
@@ -120,7 +122,7 @@ sudo ./imx500pi_provision_service.sh
 
 | Script | Purpose |
 |---|---|
-| `imx500pi_provision.sh` | Base OS: camera interface, I2C, GPU memory, log directory, WiFi power saving |
+| `imx500pi_provision.sh` | Base OS: camera interface, GPU memory, log directory |
 | `imx500pi_provision_python.sh` | Python venv with all required packages |
 | `imx500pi_provision_service.sh` | Location config, systemd service units, service alias, start everything |
 
