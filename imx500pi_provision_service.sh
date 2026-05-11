@@ -274,9 +274,9 @@ PYEOF
         echo "  Latitude: ${LATITUDE}"
         echo "  Longitude: ${LONGITUDE}"
         echo ""
-        read -r -p "Is this correct? (yes/no): " CONFIRM
+        read -r -p "Is this correct? (y/n): " CONFIRM
 
-        if [[ "$CONFIRM" == "yes" ]]; then
+        if [[ "$CONFIRM" == "y" || "$CONFIRM" == "yes" ]]; then
             break
         fi
     done

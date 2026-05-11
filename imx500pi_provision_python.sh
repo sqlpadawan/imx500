@@ -221,8 +221,8 @@ reset_environment() {
         # Check if it looks like a venv (has bin/activate)
         if [[ ! -f "$VENV_DIR/bin/activate" ]]; then
             log "WARN" "Directory doesn't appear to be a Python venv (missing bin/activate)"
-            read -p "Continue with removal? (yes/no): " confirm
-            if [[ "$confirm" != "yes" ]]; then
+            read -p "Continue with removal? (y/n): " confirm
+            if [[ "$confirm" != "y" && "$confirm" != "yes" ]]; then
                 log "INFO" "Reset cancelled by user"
                 exit 0
             fi
