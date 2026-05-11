@@ -62,19 +62,10 @@ remains accessible and the live view shows "waiting for camera..."
 
 ## Git Setup on Raspberry Pi OS Debian Trixie (Headless)
 
-### Update the System
+### Update, Install Git, and Reboot
 
-Before cloning the repo, make sure the OS is fully up to date:
 ```bash
-sudo apt update
-sudo apt upgrade -y
-sudo reboot
-```
-
-### Install Git
-```bash
-sudo apt install git -y
-git --version
+sudo apt update && sudo apt upgrade -y && sudo apt install -y git && sudo reboot
 ```
 
 ### Clone the Repository
