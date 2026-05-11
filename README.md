@@ -100,6 +100,7 @@ chmod +x *.sh
 sudo ./imx500pi_provision.sh <username>
 # --- reboot to apply boot config changes ---
 sudo reboot
+cd ~/imx500
 sudo ./imx500pi_provision_python.sh
 sudo ./imx500pi_provision_service.sh
 ```
