@@ -28,7 +28,7 @@ set -euo pipefail
 ################################################################################
 
 ### Constants
-readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_VERSION="1.1.0"
 readonly LOG_DIR="/var/log/imx500"
 readonly LOG_FILE="${LOG_DIR}/imx500pi_provision.log"
 readonly MIN_DISK_SPACE_MB=2048  # Minimum 2GB free (models + logs are large)
@@ -195,7 +195,27 @@ chmod 755 "$LOG_DIR"
 log "INFO" "Set ownership of $LOG_DIR to $USERNAME"
 
 ################################################################################
-### 4. Configure Log Rotation
+### 4. Disable WiFi Power Management
+################################################################################
+log "INFO" "Disabling WiFi power management..."
+
+# WiFi power management causes the radio to sleep between packets, adding
+# 20-100ms of wake-up latency to every SSH keystroke. It defaults to ON on
+# fresh Raspberry Pi OS installs and must be explicitly disabled for
+# responsive SSH on the Pi Zero 2W.
+WIFI_PM_CONF="/etc/NetworkManager/conf.d/wifi-power-management.conf"
+
+cat > "$WIFI_PM_CONF" << EOF
+[connection]
+wifi.powersave = 2
+EOF
+
+chmod 644 "$WIFI_PM_CONF"
+log "INFO" "WiFi power management disabled: $WIFI_PM_CONF"
+log "INFO" "Note: Takes effect after reboot or NetworkManager restart"
+
+################################################################################
+### 5. Configure Log Rotation
 ################################################################################
 log "INFO" "Configuring log rotation..."
 
@@ -232,6 +252,7 @@ log "INFO" "User: $USERNAME"
 log "INFO" "Camera Interface: Enabled"
 log "INFO" "Video Group: $USERNAME added"
 log "INFO" "Boot Config: Optimized for headless (gpu_mem=128)"
+log "INFO" "WiFi Power Mgmt: Disabled (prevents SSH keystroke lag)"
 log "INFO" "Log Directory: $LOG_DIR (owned by $USERNAME)"
 log "INFO" "Log Rotation: Configured"
 log "INFO" "Log file: $LOG_FILE"
