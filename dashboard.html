@@ -4,314 +4,693 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>IMX500 Street Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  :root {
-    --bg:        #0e1014;
-    --surface:   #16191f;
-    --border:    rgba(255,255,255,0.08);
-    --border-md: rgba(255,255,255,0.14);
-    --text:      #e8eaf0;
-    --muted:     #7a7e8a;
-    --accent:    #4ade80;
-    --accent2:   #60a5fa;
-    --accent3:   #f59e0b;
-    --pill-bg:   rgba(74,222,128,0.10);
-    --pill-text: #4ade80;
-    --radius:    8px;
-    --radius-lg: 12px;
-  }
+:root {
+  --bg:          #080a0e;
+  --surface:     #0f1117;
+  --surface-2:   #161b24;
+  --border:      rgba(255,255,255,0.06);
+  --border-md:   rgba(255,255,255,0.11);
+  --text:        #dde1ea;
+  --text-dim:    #6b7280;
+  --text-faint:  #374151;
+  --accent:      #22d3a8;
+  --accent-dim:  rgba(34,211,168,0.12);
+  --accent-glow: rgba(34,211,168,0.06);
+  --blue:        #60a5fa;
+  --blue-dim:    rgba(96,165,250,0.10);
+  --amber:       #fbbf24;
+  --amber-dim:   rgba(251,191,36,0.10);
+  --r:           6px;
+  --r-lg:        10px;
+  --mono:        "IBM Plex Mono", monospace;
+  --sans:        "IBM Plex Sans", sans-serif;
+}
 
-  body {
-    font-family: "DM Mono", "SF Mono", "Fira Code", monospace;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    padding: 2rem 1.5rem 4rem;
-  }
+html { background: var(--bg); }
 
-  /* ── Header ── */
-  header {
-    display: flex;
-    align-items: baseline;
-    gap: 1rem;
-    margin-bottom: 2.5rem;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 1.25rem;
-  }
-  .logo {
-    font-size: 11px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--accent);
-    font-weight: 500;
-  }
-  header h1 {
-    font-size: 16px;
-    font-weight: 500;
-    color: var(--text);
-    letter-spacing: -0.01em;
-  }
-  .updated {
-    margin-left: auto;
-    font-size: 11px;
-    color: var(--muted);
-  }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
 
-  /* ── Stat bar ── */
-  .stat-bar {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 12px;
-    margin-bottom: 2rem;
-  }
-  .stat {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 14px 16px;
-  }
-  .stat-label {
-    font-size: 10px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--muted);
-    margin-bottom: 6px;
-  }
-  .stat-value {
-    font-size: 22px;
-    font-weight: 500;
-    color: var(--text);
-    line-height: 1;
-  }
-  .stat-value.green  { color: var(--accent); }
-  .stat-value.blue   { color: var(--accent2); }
-  .stat-value.amber  { color: var(--accent3); }
+/* ── Scanline texture overlay ── */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.08) 2px,
+    rgba(0,0,0,0.08) 4px
+  );
+  pointer-events: none;
+  z-index: 0;
+}
 
-  /* ── Day cards ── */
-  .day-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
+.wrap {
+  position: relative;
+  z-index: 1;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2.5rem 2rem 5rem;
+}
 
-  .day-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-  }
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 3rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
 
-  .day-header {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 14px 18px;
-    cursor: pointer;
-    user-select: none;
-    border-bottom: 1px solid transparent;
-    transition: background 0.15s;
-  }
-  .day-header:hover {
-    background: rgba(255,255,255,0.025);
-  }
-  .day-header.open {
-    border-bottom-color: var(--border);
-  }
+.header-left { display: flex; flex-direction: column; gap: 6px; }
 
-  .day-date {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text);
-    min-width: 100px;
-  }
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
-  .day-bar-wrap {
-    flex: 1;
-    height: 6px;
-    background: rgba(255,255,255,0.05);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .day-bar-fill {
-    height: 100%;
-    border-radius: 3px;
-    background: var(--accent);
-    transition: width 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-  }
+.wordmark-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(34,211,168,0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
-  .day-total {
-    font-size: 13px;
-    color: var(--text);
-    min-width: 54px;
-    text-align: right;
-  }
-  .day-total span {
-    font-size: 10px;
-    color: var(--muted);
-    margin-left: 3px;
-  }
+.wordmark-icon svg { width: 14px; height: 14px; }
 
-  .chevron {
-    width: 14px;
-    height: 14px;
-    color: var(--muted);
-    flex-shrink: 0;
-    transition: transform 0.2s;
-  }
-  .day-header.open .chevron {
-    transform: rotate(180deg);
-  }
+.wordmark-text {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 500;
+}
 
-  /* ── Label breakdown ── */
-  .label-grid {
-    display: none;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 8px;
-    padding: 14px 18px;
-  }
-  .label-grid.visible {
-    display: grid;
-  }
+.header-title {
+  font-family: var(--sans);
+  font-size: 22px;
+  font-weight: 300;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
 
-  .label-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .label-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .label-name {
-    font-size: 12px;
-    color: var(--muted);
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .label-count {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text);
-  }
+.header-title strong { font-weight: 500; }
 
-  /* ── Empty / error states ── */
-  .empty {
-    text-align: center;
-    padding: 4rem 1rem;
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1.7;
-  }
-  .empty strong { color: var(--text); display: block; margin-bottom: 0.4rem; font-size: 15px; }
+.header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
 
-  @media (max-width: 480px) {
-    .day-bar-wrap { display: none; }
-  }
+.live-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.updated-at {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* ── Stat grid ── */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 2rem;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 18px 20px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.stat-card:hover { border-color: var(--border-md); }
+
+.stat-card::after {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+}
+
+.stat-card.green::after { background: linear-gradient(90deg, transparent, var(--accent), transparent); }
+.stat-card.blue::after  { background: linear-gradient(90deg, transparent, var(--blue), transparent); }
+.stat-card.amber::after { background: linear-gradient(90deg, transparent, var(--amber), transparent); }
+
+.stat-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.stat-value {
+  font-family: var(--sans);
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.stat-value.green { color: var(--accent); }
+.stat-value.blue  { color: var(--blue); }
+.stat-value.amber { color: var(--amber); }
+.stat-value.plain { color: var(--text); }
+
+/* ── Section label ── */
+.section-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  margin-top: 2.5rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── Activity chart ── */
+.chart-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 20px 24px 16px;
+  margin-bottom: 10px;
+}
+
+.chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 80px;
+  margin-bottom: 6px;
+}
+
+.chart-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.chart-bar {
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent-dim);
+  border-top: 1px solid rgba(34,211,168,0.3);
+  transition: background 0.15s;
+  min-height: 2px;
+  position: relative;
+  cursor: default;
+}
+
+.chart-bar.today {
+  background: rgba(34,211,168,0.22);
+  border-top-color: var(--accent);
+}
+
+.chart-bar:hover {
+  background: rgba(34,211,168,0.28);
+}
+
+.chart-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.chart-label.today { color: var(--accent); }
+
+/* ── Day list ── */
+.day-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.day-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.day-card:hover { border-color: var(--border-md); }
+.day-card.today-card { border-color: rgba(34,211,168,0.2); }
+
+.day-header {
+  display: grid;
+  grid-template-columns: 120px 1fr 80px 60px 20px;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid transparent;
+  transition: background 0.12s;
+}
+
+.day-header:hover { background: rgba(255,255,255,0.015); }
+.day-header.open  { border-bottom-color: var(--border); }
+
+.day-date {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.day-date.is-today {
+  color: var(--accent);
+}
+
+.day-date .weekday {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 400;
+  display: block;
+  margin-bottom: 1px;
+}
+
+.day-bar-track {
+  height: 3px;
+  background: var(--surface-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.day-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.5;
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.today-card .day-bar-fill { opacity: 1; }
+
+.day-total {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  text-align: right;
+  font-weight: 500;
+}
+
+.day-pills {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.day-pill {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  transition: transform 0.2s, color 0.2s;
+  justify-self: center;
+}
+
+.day-header.open .chevron { transform: rotate(180deg); color: var(--text-dim); }
+
+/* ── Label breakdown ── */
+.label-grid {
+  display: none;
+  gap: 1px;
+  background: var(--border);
+}
+
+.label-grid.visible { display: flex; flex-direction: column; }
+
+.label-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 20px;
+  background: var(--surface);
+  transition: background 0.1s;
+}
+
+.label-row:hover { background: var(--surface-2); }
+
+.label-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.label-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex: 1;
+}
+
+.label-bar-track {
+  width: 120px;
+  height: 2px;
+  background: var(--surface-2);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.label-bar-fill {
+  height: 100%;
+  border-radius: 1px;
+  opacity: 0.6;
+}
+
+.label-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  min-width: 32px;
+  text-align: right;
+}
+
+.label-pct {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── Empty ── */
+.empty {
+  text-align: center;
+  padding: 5rem 1rem;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 2;
+}
+
+.empty strong {
+  display: block;
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 0.5rem;
+  font-family: var(--sans);
+  font-weight: 500;
+}
+
+/* ── Footer ── */
+.footer {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.footer-links {
+  display: flex;
+  gap: 20px;
+}
+
+.footer-link {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: color 0.15s;
+}
+
+.footer-link:hover { color: var(--accent); }
+
+.footer-copy {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+@media (max-width: 640px) {
+  .wrap { padding: 1.5rem 1rem 4rem; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .day-header { grid-template-columns: 100px 1fr 60px 16px; }
+  .day-pills { display: none; }
+  .label-bar-track { width: 60px; }
+  .header { flex-direction: column; gap: 1rem; }
+  .header-right { align-items: flex-start; }
+}
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<header>
-  <span class="logo">IMX500</span>
-  <h1>Street Monitor</h1>
-  <span class="updated" id="updated-at"></span>
-</header>
+  <header class="header">
+    <div class="header-left">
+      <div class="wordmark">
+        <div class="wordmark-icon">
+          <svg viewBox="0 0 14 14" fill="none" stroke="#22d3a8" stroke-width="1.5" stroke-linecap="round">
+            <circle cx="7" cy="7" r="5"/>
+            <circle cx="7" cy="7" r="1.5" fill="#22d3a8" stroke="none"/>
+            <line x1="7" y1="1" x2="7" y2="2.5"/>
+            <line x1="7" y1="11.5" x2="7" y2="13"/>
+            <line x1="1" y1="7" x2="2.5" y2="7"/>
+            <line x1="11.5" y1="7" x2="13" y2="7"/>
+          </svg>
+        </div>
+        <span class="wordmark-text">IMX500</span>
+      </div>
+      <h1 class="header-title"><strong>Street Monitor</strong> — Event Log</h1>
+    </div>
+    <div class="header-right">
+      <div class="live-badge">
+        <span class="live-dot"></span>
+        <span>Live</span>
+      </div>
+      <div class="updated-at" id="updated-at">—</div>
+    </div>
+  </header>
 
-<div class="stat-bar" id="stat-bar"></div>
-<div class="day-list" id="day-list"></div>
+  <div class="stat-grid" id="stat-grid"></div>
+
+  <div class="section-label">Activity — last 14 days</div>
+  <div class="chart-wrap" id="chart-wrap">
+    <div class="chart-bars" id="chart-bars"></div>
+  </div>
+
+  <div class="section-label">Daily breakdown</div>
+  <div class="day-list" id="day-list"></div>
+
+  <footer class="footer">
+    <div class="footer-links">
+      <a class="footer-link" href="/">Live view</a>
+      <a class="footer-link" href="/summary.json">Raw JSON</a>
+    </div>
+    <div class="footer-copy" id="footer-copy"></div>
+  </footer>
+
+</div>
 
 <script>
-const LABEL_COLORS = [
-  "#4ade80","#60a5fa","#f59e0b","#f472b6",
-  "#a78bfa","#34d399","#fb923c","#94a3b8",
-];
+const COLORS = ["#22d3a8","#60a5fa","#fbbf24","#f472b6","#a78bfa","#34d399","#fb923c","#94a3b8"];
 
 function fmtDate(iso) {
   const d = new Date(iso + "T12:00:00");
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  return {
+    weekday: d.toLocaleDateString("en-US", { weekday: "short" }),
+    short:   d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    full:    d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }),
+  };
 }
 
-function buildStats(days) {
-  const totalEvents = days.reduce((s, d) => s + d.total, 0);
-  const daysActive  = days.length;
-  const allLabels   = new Set(days.flatMap(d => Object.keys(d.labels)));
-  const busiest     = days.reduce((best, d) => d.total > best.total ? d : best, { total: 0, date: "—" });
+function isToday(iso) {
+  return iso === new Date().toISOString().slice(0, 10);
+}
 
-  return [
-    { label: "Total events",  value: totalEvents.toLocaleString(), cls: "green" },
-    { label: "Days recorded", value: daysActive.toString(),         cls: "blue"  },
-    { label: "Label types",   value: allLabels.size.toString(),     cls: "amber" },
-    { label: "Busiest day",   value: busiest.date !== "—" ? fmtDate(busiest.date) : "—", cls: "" },
-  ];
+function colorFor(label, allLabels) {
+  const idx = allLabels.indexOf(label);
+  return COLORS[idx % COLORS.length];
 }
 
 function renderStats(days) {
-  const bar   = document.getElementById("stat-bar");
-  const stats = buildStats(days);
-  bar.innerHTML = stats.map(s => `
-    <div class="stat">
+  const totalEvents = days.reduce((s, d) => s + d.total, 0);
+  const daysActive  = days.length;
+  const allLabels   = new Set(days.flatMap(d => Object.keys(d.labels)));
+  const busiest     = days.reduce((b, d) => d.total > b.total ? d : b, { total: 0, date: "" });
+  const todayData   = days.find(d => isToday(d.date));
+
+  const stats = [
+    { label: "Total events",  value: totalEvents.toLocaleString(), cls: "green" },
+    { label: "Days recorded", value: daysActive.toString(),         cls: "blue"  },
+    { label: "Label types",   value: allLabels.size.toString(),     cls: "amber" },
+    { label: "Today",         value: todayData ? todayData.total.toLocaleString() : "—", cls: "plain" },
+  ];
+
+  document.getElementById("stat-grid").innerHTML = stats.map(s => `
+    <div class="stat-card ${s.cls}">
       <div class="stat-label">${s.label}</div>
       <div class="stat-value ${s.cls}">${s.value}</div>
     </div>
   `).join("");
 }
 
-function renderDays(days) {
-  const list   = document.getElementById("day-list");
-  const maxDay = Math.max(...days.map(d => d.total), 1);
+function renderChart(days) {
+  const recent = days.slice(0, 14).reverse();
+  const max    = Math.max(...recent.map(d => d.total), 1);
+  const wrap   = document.getElementById("chart-bars");
 
-  // Collect all unique labels across all days for stable color assignment
+  wrap.innerHTML = recent.map(d => {
+    const pct  = Math.round((d.total / max) * 100);
+    const dt   = fmtDate(d.date);
+    const today = isToday(d.date);
+    return `
+      <div class="chart-bar-col" title="${dt.full}: ${d.total} events">
+        <div class="chart-bar${today ? " today" : ""}" style="height:${pct}%"></div>
+        <div class="chart-label${today ? " today" : ""}">${dt.short.split(" ")[1]}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderDays(days) {
   const allLabels = [];
   days.forEach(d => Object.keys(d.labels).forEach(l => {
     if (!allLabels.includes(l)) allLabels.push(l);
   }));
   allLabels.sort();
-  const colorFor = label => LABEL_COLORS[allLabels.indexOf(label) % LABEL_COLORS.length];
+
+  const maxTotal = Math.max(...days.map(d => d.total), 1);
+  const list     = document.getElementById("day-list");
 
   list.innerHTML = days.map((day, i) => {
-    const pct    = Math.round((day.total / maxDay) * 100);
+    const pct    = Math.round((day.total / maxTotal) * 100);
+    const dt     = fmtDate(day.date);
+    const today  = isToday(day.date);
     const labels = Object.entries(day.labels);
+    const dayTotal = day.total;
 
-    const labelRows = labels.map(([name, count]) => `
-      <div class="label-row">
-        <div class="label-dot" style="background:${colorFor(name)}"></div>
-        <span class="label-name">${name}</span>
-        <span class="label-count">${count.toLocaleString()}</span>
-      </div>
-    `).join("");
+    const pillsHtml = labels.slice(0, 3).map(([name]) =>
+      `<div class="day-pill" style="background:${colorFor(name, allLabels)}" title="${name}"></div>`
+    ).join("");
+
+    const labelRowsHtml = labels.map(([name, count]) => {
+      const color = colorFor(name, allLabels);
+      const pctLabel = dayTotal > 0 ? Math.round((count / dayTotal) * 100) : 0;
+      const barW = dayTotal > 0 ? Math.round((count / dayTotal) * 100) : 0;
+      return `
+        <div class="label-row">
+          <div class="label-swatch" style="background:${color}"></div>
+          <div class="label-name">${name}</div>
+          <div class="label-bar-track">
+            <div class="label-bar-fill" style="width:${barW}%;background:${color}"></div>
+          </div>
+          <div class="label-count">${count.toLocaleString()}</div>
+          <div class="label-pct">${pctLabel}%</div>
+        </div>
+      `;
+    }).join("");
 
     return `
-      <div class="day-card">
+      <div class="day-card${today ? " today-card" : ""}">
         <div class="day-header" data-idx="${i}" onclick="toggleDay(this)">
-          <div class="day-date">${fmtDate(day.date)}</div>
-          <div class="day-bar-wrap">
+          <div class="day-date${today ? " is-today" : ""}">
+            <span class="weekday">${today ? "Today" : dt.weekday}</span>
+            ${dt.short}
+          </div>
+          <div class="day-bar-track">
             <div class="day-bar-fill" style="width:${pct}%"></div>
           </div>
-          <div class="day-total">${day.total.toLocaleString()}<span>events</span></div>
-          <svg class="chevron" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+          <div class="day-total">${day.total.toLocaleString()}</div>
+          <div class="day-pills">${pillsHtml}</div>
+          <svg class="chevron" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
             <path d="M3 5l4 4 4-4"/>
           </svg>
         </div>
-        <div class="label-grid" id="labels-${i}">
-          ${labelRows}
-        </div>
+        <div class="label-grid" id="labels-${i}">${labelRowsHtml}</div>
       </div>
     `;
   }).join("");
 }
 
 function toggleDay(header) {
-  const idx   = header.dataset.idx;
-  const grid  = document.getElementById("labels-" + idx);
-  const isOpen = header.classList.contains("open");
-  header.classList.toggle("open", !isOpen);
-  grid.classList.toggle("visible", !isOpen);
+  const idx  = header.dataset.idx;
+  const grid = document.getElementById("labels-" + idx);
+  const open = header.classList.contains("open");
+  header.classList.toggle("open", !open);
+  grid.classList.toggle("visible", !open);
 }
 
 function showError(msg) {
@@ -320,25 +699,36 @@ function showError(msg) {
 }
 
 async function init() {
+  const now = new Date();
+  document.getElementById("updated-at").textContent =
+    now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  document.getElementById("footer-copy").textContent =
+    "IMX500 · " + now.getFullYear();
+
   try {
     const res = await fetch("summary.json?t=" + Date.now());
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     const days = data.days || [];
 
-    document.getElementById("updated-at").textContent =
-      "updated " + new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-
     if (!days.length) {
-      showError("No events logged yet. Check back after the camera has been running.");
+      showError("No events logged yet.");
       return;
     }
 
     renderStats(days);
+    renderChart(days);
     renderDays(days);
 
+    // Auto-open today's card if present
+    const todayIdx = days.findIndex(d => isToday(d.date));
+    if (todayIdx >= 0) {
+      const header = document.querySelector(`[data-idx="${todayIdx}"]`);
+      if (header) toggleDay(header);
+    }
+
   } catch (e) {
-    showError("Could not load summary.json — make sure build_summary.py has been run.");
+    showError("Could not load summary.json.");
     console.error(e);
   }
 }
