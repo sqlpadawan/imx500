@@ -199,10 +199,9 @@ log "INFO" "Set ownership of $LOG_DIR to $USERNAME"
 ################################################################################
 log "INFO" "Disabling WiFi power management..."
 
-# WiFi power management causes the radio to sleep between packets, adding
-# 20-100ms of wake-up latency to every SSH keystroke. It defaults to ON on
-# fresh Raspberry Pi OS installs and must be explicitly disabled for
-# responsive SSH on the Pi Zero 2W.
+# WiFi power management puts the radio to sleep during idle periods, causing
+# latency spikes on SSH connections when the radio wakes to handle incoming
+# packets. Defaults to ON in Raspberry Pi OS — disable for responsive SSH.
 WIFI_PM_CONF="/etc/NetworkManager/conf.d/wifi-power-management.conf"
 
 cat > "$WIFI_PM_CONF" << EOF
