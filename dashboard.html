@@ -452,6 +452,122 @@ body::before {
   text-align: right;
 }
 
+/* ── Confidence section ── */
+.conf-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.conf-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 16px 18px 14px;
+  transition: border-color 0.15s;
+}
+
+.conf-card:hover { border-color: var(--border-md); }
+
+.conf-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.conf-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.conf-label-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  font-weight: 500;
+  flex: 1;
+}
+
+.conf-total {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* Range track */
+.conf-range-wrap {
+  margin-bottom: 8px;
+}
+
+.conf-track {
+  position: relative;
+  height: 4px;
+  background: var(--surface-2);
+  border-radius: 2px;
+  margin-bottom: 6px;
+}
+
+.conf-band {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 2px;
+  opacity: 0.45;
+}
+
+.conf-median-tick {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 10px;
+  border-radius: 1px;
+  transform: translateX(-50%);
+}
+
+.conf-axis {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.conf-axis-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.conf-axis-item.median { align-items: center; }
+
+.conf-val {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.conf-axis-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.conf-no-data {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  padding: 6px 0;
+}
+
+@media (max-width: 640px) {
+  .conf-grid { grid-template-columns: 1fr; }
+}
+
 /* ── Empty ── */
 .empty {
   text-align: center;
@@ -554,6 +670,9 @@ body::before {
   <div class="section-label">Daily breakdown</div>
   <div class="day-list" id="day-list"></div>
 
+  <div class="section-label">Label confidence</div>
+  <div class="conf-grid" id="conf-grid"></div>
+
   <footer class="footer">
     <div class="footer-links">
       <a class="footer-link" href="/">Live view</a>
@@ -626,12 +745,7 @@ function renderChart(days) {
   }).join("");
 }
 
-function renderDays(days) {
-  const allLabels = [];
-  days.forEach(d => Object.keys(d.labels).forEach(l => {
-    if (!allLabels.includes(l)) allLabels.push(l);
-  }));
-  allLabels.sort();
+function renderDays(days, allLabels) {
 
   const maxTotal = Math.max(...days.map(d => d.total), 1);
   const list     = document.getElementById("day-list");
@@ -699,6 +813,76 @@ function showError(msg) {
     `<div class="empty"><strong>No data available</strong>${msg}</div>`;
 }
 
+function renderConfidence(labelsData, allLabels) {
+  const grid = document.getElementById("conf-grid");
+  if (!labelsData || !Object.keys(labelsData).length) {
+    grid.innerHTML = `<div class="conf-no-data" style="grid-column:1/-1">No confidence data available yet.</div>`;
+    return;
+  }
+
+  // Confidence values span 0–1 but in practice cluster 0.40–0.70.
+  // We pin the track to [0.35, 0.75] so differences are visible without
+  // collapsing everything to the centre. Values outside this range are clamped.
+  const TRACK_MIN = 0.35;
+  const TRACK_MAX = 0.75;
+  const trackSpan = TRACK_MAX - TRACK_MIN;
+
+  function pct(v) {
+    return Math.min(100, Math.max(0, ((v - TRACK_MIN) / trackSpan) * 100));
+  }
+
+  grid.innerHTML = Object.entries(labelsData).map(([label, stats]) => {
+    const color = colorFor(label, allLabels);
+    const totalStr = stats.total.toLocaleString() + " events";
+
+    if (stats.min_conf == null) {
+      return `
+        <div class="conf-card">
+          <div class="conf-card-header">
+            <div class="conf-swatch" style="background:${color}"></div>
+            <div class="conf-label-name">${label}</div>
+            <div class="conf-total">${totalStr}</div>
+          </div>
+          <div class="conf-no-data">no confidence data</div>
+        </div>`;
+    }
+
+    const minPct    = pct(stats.min_conf);
+    const maxPct    = pct(stats.max_conf);
+    const medPct    = pct(stats.median_conf);
+    const bandWidth = maxPct - minPct;
+
+    return `
+      <div class="conf-card">
+        <div class="conf-card-header">
+          <div class="conf-swatch" style="background:${color}"></div>
+          <div class="conf-label-name">${label}</div>
+          <div class="conf-total">${totalStr}</div>
+        </div>
+        <div class="conf-range-wrap">
+          <div class="conf-track">
+            <div class="conf-band" style="left:${minPct}%;width:${bandWidth}%;background:${color}"></div>
+            <div class="conf-median-tick" style="left:${medPct}%;background:${color};opacity:0.9"></div>
+          </div>
+          <div class="conf-axis">
+            <div class="conf-axis-item">
+              <span class="conf-val">${stats.min_conf.toFixed(3)}</span>
+              <span class="conf-axis-label">min</span>
+            </div>
+            <div class="conf-axis-item median">
+              <span class="conf-val">${stats.median_conf.toFixed(3)}</span>
+              <span class="conf-axis-label">median</span>
+            </div>
+            <div class="conf-axis-item" style="align-items:flex-end">
+              <span class="conf-val">${stats.max_conf.toFixed(3)}</span>
+              <span class="conf-axis-label">max</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
 async function init() {
   const now = new Date();
   document.getElementById("updated-at").textContent =
@@ -717,9 +901,16 @@ async function init() {
       return;
     }
 
+    const allLabels = [];
+    days.forEach(d => Object.keys(d.labels).forEach(l => {
+      if (!allLabels.includes(l)) allLabels.push(l);
+    }));
+    allLabels.sort();
+
     renderStats(days);
     renderChart(days);
-    renderDays(days);
+    renderDays(days, allLabels);
+    renderConfidence(data.labels || {}, allLabels);
 
     // Auto-open today's card if present
     const todayIdx = days.findIndex(d => isToday(d.date));

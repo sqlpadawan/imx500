@@ -23,9 +23,19 @@ LOG_DIR_DEFAULT = Path("/var/log/imx500")
 OUT_DEFAULT     = LOG_DIR_DEFAULT / "summary.json"
 
 
+def _median(values: list) -> float:
+    """Return the median of a sorted or unsorted list of floats."""
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
+
+
 def summarize(log_dir: Path, out_path: Path) -> None:
     # day → label → count
     counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    # label → list of confidence floats (across all days)
+    conf_values: dict[str, list] = defaultdict(list)
 
     log_files = sorted(log_dir.glob("events.jsonl*"))
     if not log_files:
@@ -56,6 +66,14 @@ def summarize(log_dir: Path, out_path: Path) -> None:
                     date = ts[:10] if len(ts) >= 10 else "unknown"
                     counts[date][label] += 1
 
+                    # Accumulate confidence for global label stats
+                    conf = record.get("confidence")
+                    if conf is not None:
+                        try:
+                            conf_values[label].append(float(conf))
+                        except (TypeError, ValueError):
+                            pass
+
         except OSError as e:
             print(f"[build_summary] Error reading {log_file}: {e}")
 
@@ -70,7 +88,23 @@ def summarize(log_dir: Path, out_path: Path) -> None:
             "labels": dict(sorted(label_counts.items(), key=lambda x: x[1], reverse=True)),
         })
 
-    summary = {"days": days}
+    # Build global per-label confidence stats, sorted by total count descending
+    all_label_counts = defaultdict(int)
+    for day in days:
+        for label, count in day["labels"].items():
+            all_label_counts[label] += count
+
+    labels_out = {}
+    for label in sorted(all_label_counts, key=lambda l: all_label_counts[l], reverse=True):
+        vals = conf_values.get(label, [])
+        entry: dict = {"total": all_label_counts[label]}
+        if vals:
+            entry["min_conf"]    = round(min(vals), 3)
+            entry["median_conf"] = round(_median(vals), 3)
+            entry["max_conf"]    = round(max(vals), 3)
+        labels_out[label] = entry
+
+    summary = {"days": days, "labels": labels_out}
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
