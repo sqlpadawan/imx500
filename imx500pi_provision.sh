@@ -127,7 +127,18 @@ else
 fi
 
 ################################################################################
-### 2. Optimize /boot/firmware/config.txt for Headless Mode
+### 2a. Enable User Lingering
+################################################################################
+log "INFO" "Enabling user lingering for $ACTUAL_USER..."
+if loginctl enable-linger "$ACTUAL_USER"; then
+    log "INFO" "Lingering enabled — user systemd instance will run at boot without login"
+else
+    log "ERROR" "Failed to enable lingering for $ACTUAL_USER"
+    exit 1
+fi
+
+################################################################################
+### 3. Optimize /boot/firmware/config.txt for Headless Mode
 ################################################################################
 log "INFO" "Optimizing /boot/firmware/config.txt for headless operation..."
 
@@ -179,7 +190,7 @@ add_or_update_config "gpu_mem" "128"
 log "INFO" "Boot configuration optimized"
 
 ################################################################################
-### 3. Create IMX500 Log Directory
+### 4. Create IMX500 Log Directory
 ################################################################################
 log "INFO" "Creating IMX500 log directory..."
 
@@ -195,7 +206,7 @@ chmod 755 "$LOG_DIR"
 log "INFO" "Set ownership of $LOG_DIR to $USERNAME"
 
 ################################################################################
-### 4. Disable WiFi Power Management
+### 5. Disable WiFi Power Management
 ################################################################################
 log "INFO" "Disabling WiFi power management..."
 
@@ -214,7 +225,7 @@ log "INFO" "WiFi power management disabled: $WIFI_PM_CONF"
 log "INFO" "Note: Takes effect after reboot or NetworkManager restart"
 
 ################################################################################
-### 5. Configure Log Rotation
+### 6. Configure Log Rotation
 ################################################################################
 log "INFO" "Configuring log rotation..."
 
@@ -240,7 +251,7 @@ else
 fi
 
 ################################################################################
-### 6. Final Summary
+### 7. Final Summary
 ################################################################################
 echo ""
 log "INFO" "========================================="
