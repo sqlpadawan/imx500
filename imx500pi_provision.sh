@@ -206,7 +206,39 @@ chmod 755 "$LOG_DIR"
 log "INFO" "Set ownership of $LOG_DIR to $USERNAME"
 
 ################################################################################
-### 5. Disable WiFi Power Management
+### 5. Configure Persistent Journal Logging
+################################################################################
+log "INFO" "Configuring persistent systemd journal logging..."
+
+JOURNALD_CONF="/etc/systemd/journald.conf"
+
+# Enable persistent storage so journal survives reboots
+if grep -q "^Storage=persistent" "$JOURNALD_CONF"; then
+    log "INFO" "Journal persistence already configured"
+else
+    sed -i 's/^#Storage=.*/Storage=persistent/' "$JOURNALD_CONF"
+    # If the line wasn't present at all (not just commented), add it
+    if ! grep -q "^Storage=persistent" "$JOURNALD_CONF"; then
+        echo "Storage=persistent" >> "$JOURNALD_CONF"
+    fi
+    systemctl restart systemd-journald
+    log "INFO" "Journal persistence enabled: $JOURNALD_CONF"
+fi
+
+# Cap journal size to avoid filling the SD card over time
+if grep -q "^SystemMaxUse=50M" "$JOURNALD_CONF"; then
+    log "INFO" "Journal size cap already configured"
+else
+    sed -i 's/^#SystemMaxUse=.*/SystemMaxUse=50M/' "$JOURNALD_CONF"
+    if ! grep -q "^SystemMaxUse=50M" "$JOURNALD_CONF"; then
+        echo "SystemMaxUse=50M" >> "$JOURNALD_CONF"
+    fi
+    systemctl restart systemd-journald
+    log "INFO" "Journal size cap set to 50M"
+fi
+
+################################################################################
+### 6. Disable WiFi Power Management
 ################################################################################
 log "INFO" "Disabling WiFi power management..."
 
@@ -225,7 +257,7 @@ log "INFO" "WiFi power management disabled: $WIFI_PM_CONF"
 log "INFO" "Note: Takes effect after reboot or NetworkManager restart"
 
 ################################################################################
-### 6. Configure Log Rotation
+### 7. Configure Log Rotation
 ################################################################################
 log "INFO" "Configuring log rotation..."
 
@@ -251,7 +283,7 @@ else
 fi
 
 ################################################################################
-### 7. Final Summary
+### 8. Final Summary
 ################################################################################
 echo ""
 log "INFO" "========================================="
