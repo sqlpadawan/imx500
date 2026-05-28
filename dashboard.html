@@ -538,6 +538,73 @@ html[data-theme="light"] body::before { opacity: 0; }
   .header-right { align-items: flex-start; }
 }
 
+/* ── All-time label summary ── */
+.label-summary-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.label-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 20px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.label-summary-row:last-child { border-bottom: none; }
+.label-summary-row:hover { background: var(--surface-2); }
+
+.label-summary-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.label-summary-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 80px;
+}
+
+.label-summary-bar-track {
+  flex: 1;
+  height: 4px;
+  background: var(--surface-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.label-summary-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  opacity: 0.7;
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.label-summary-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  min-width: 44px;
+  text-align: right;
+}
+
+.label-summary-pct {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  min-width: 40px;
+  text-align: right;
+}
+
 /* ── Theme toggle ── */
 .theme-toggle {
   display: flex;
@@ -633,6 +700,9 @@ html[data-theme="light"] body::before { opacity: 0; }
 
   <div class="section-label">Daily breakdown</div>
   <div class="day-list" id="day-list"></div>
+
+  <div class="section-label">All-time by label</div>
+  <div class="label-summary-wrap" id="label-summary"></div>
 
   <footer class="footer">
     <div class="footer-links">
@@ -799,6 +869,41 @@ function renderDays(days) {
   }).join("");
 }
 
+function renderLabelSummary(days) {
+  const allLabels = [];
+  days.forEach(d => Object.keys(d.labels).forEach(l => {
+    if (!allLabels.includes(l)) allLabels.push(l);
+  }));
+  allLabels.sort();
+
+  const totals = {};
+  days.forEach(d => {
+    Object.entries(d.labels).forEach(([label, count]) => {
+      totals[label] = (totals[label] || 0) + count;
+    });
+  });
+
+  const grandTotal = Object.values(totals).reduce((s, n) => s + n, 0);
+  const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+
+  document.getElementById("label-summary").innerHTML = sorted.map(([name, count]) => {
+    const color  = colorFor(name, allLabels);
+    const pct    = grandTotal > 0 ? Math.round((count / grandTotal) * 100) : 0;
+    const barW   = grandTotal > 0 ? Math.round((count / grandTotal) * 100) : 0;
+    return `
+      <div class="label-summary-row">
+        <div class="label-summary-swatch" style="background:${color}"></div>
+        <div class="label-summary-name">${name}</div>
+        <div class="label-summary-bar-track">
+          <div class="label-summary-bar-fill" style="width:${barW}%;background:${color}"></div>
+        </div>
+        <div class="label-summary-count">${count.toLocaleString()}</div>
+        <div class="label-summary-pct">${pct}%</div>
+      </div>
+    `;
+  }).join("");
+}
+
 function toggleDay(header) {
   const idx  = header.dataset.idx;
   const grid = document.getElementById("labels-" + idx);
@@ -833,6 +938,7 @@ async function init() {
     renderStats(days);
     renderChart(days);
     renderDays(days);
+    renderLabelSummary(days);
 
     // Auto-open today's card if present
     const todayIdx = days.findIndex(d => isToday(d.date));
