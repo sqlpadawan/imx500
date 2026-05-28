@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,7 +10,31 @@
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Light theme (default) ── */
 :root {
+  --bg:          #f4f6f9;
+  --surface:     #ffffff;
+  --surface-2:   #eef0f4;
+  --border:      rgba(0,0,0,0.07);
+  --border-md:   rgba(0,0,0,0.13);
+  --text:        #1a1d24;
+  --text-dim:    #6b7280;
+  --text-faint:  #b0b7c3;
+  --accent:      #0fa37c;
+  --accent-dim:  rgba(15,163,124,0.10);
+  --accent-glow: rgba(15,163,124,0.05);
+  --blue:        #2563eb;
+  --blue-dim:    rgba(37,99,235,0.10);
+  --amber:       #d97706;
+  --amber-dim:   rgba(217,119,6,0.10);
+  --r:           6px;
+  --r-lg:        10px;
+  --mono:        "IBM Plex Mono", monospace;
+  --sans:        "IBM Plex Sans", sans-serif;
+}
+
+/* ── Dark theme override ── */
+[data-theme="dark"] {
   --bg:          #080a0e;
   --surface:     #0f1117;
   --surface-2:   #161b24;
@@ -26,18 +50,15 @@
   --blue-dim:    rgba(96,165,250,0.10);
   --amber:       #fbbf24;
   --amber-dim:   rgba(251,191,36,0.10);
-  --r:           6px;
-  --r-lg:        10px;
-  --mono:        "IBM Plex Mono", monospace;
-  --sans:        "IBM Plex Sans", sans-serif;
 }
 
-html { background: var(--bg); }
+html { background: var(--bg); transition: background 0.25s; }
 
 body {
   font-family: var(--sans);
   background: var(--bg);
   color: var(--text);
+  transition: background 0.25s, color 0.25s;
   min-height: 100vh;
   padding: 0;
   font-size: 14px;
@@ -59,7 +80,10 @@ body::before {
   );
   pointer-events: none;
   z-index: 0;
+  transition: opacity 0.2s;
 }
+
+html[data-theme="light"] body::before { opacity: 0; }
 
 .wrap {
   position: relative;
@@ -452,122 +476,6 @@ body::before {
   text-align: right;
 }
 
-/* ── Confidence section ── */
-.conf-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-}
-
-.conf-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  padding: 16px 18px 14px;
-  transition: border-color 0.15s;
-}
-
-.conf-card:hover { border-color: var(--border-md); }
-
-.conf-card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.conf-swatch {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.conf-label-name {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text);
-  font-weight: 500;
-  flex: 1;
-}
-
-.conf-total {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--text-dim);
-}
-
-/* Range track */
-.conf-range-wrap {
-  margin-bottom: 8px;
-}
-
-.conf-track {
-  position: relative;
-  height: 4px;
-  background: var(--surface-2);
-  border-radius: 2px;
-  margin-bottom: 6px;
-}
-
-.conf-band {
-  position: absolute;
-  top: 0;
-  height: 100%;
-  border-radius: 2px;
-  opacity: 0.45;
-}
-
-.conf-median-tick {
-  position: absolute;
-  top: -3px;
-  width: 2px;
-  height: 10px;
-  border-radius: 1px;
-  transform: translateX(-50%);
-}
-
-.conf-axis {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-.conf-axis-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-}
-
-.conf-axis-item.median { align-items: center; }
-
-.conf-val {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text);
-}
-
-.conf-axis-label {
-  font-family: var(--mono);
-  font-size: 9px;
-  color: var(--text-dim);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.conf-no-data {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--text-faint);
-  padding: 6px 0;
-}
-
-@media (max-width: 640px) {
-  .conf-grid { grid-template-columns: 1fr; }
-}
-
 /* ── Empty ── */
 .empty {
   text-align: center;
@@ -629,6 +537,56 @@ body::before {
   .header { flex-direction: column; gap: 1rem; }
   .header-right { align-items: flex-start; }
 }
+
+/* ── Theme toggle ── */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+}
+
+.theme-toggle-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.toggle-track {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-md);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+
+.toggle-track.on {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.2s, background 0.2s;
+}
+
+.toggle-track.on .toggle-thumb {
+  transform: translateX(16px);
+  background: var(--accent);
+}
 </style>
 </head>
 <body>
@@ -657,6 +615,12 @@ body::before {
         <span>Live</span>
       </div>
       <div class="updated-at" id="updated-at">—</div>
+      <div class="theme-toggle" id="theme-toggle" title="Toggle light/dark theme">
+        <span class="theme-toggle-label" id="theme-label">Dark</span>
+        <div class="toggle-track on" id="toggle-track">
+          <div class="toggle-thumb"></div>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -670,9 +634,6 @@ body::before {
   <div class="section-label">Daily breakdown</div>
   <div class="day-list" id="day-list"></div>
 
-  <div class="section-label">Label confidence</div>
-  <div class="conf-grid" id="conf-grid"></div>
-
   <footer class="footer">
     <div class="footer-links">
       <a class="footer-link" href="/">Live view</a>
@@ -685,6 +646,39 @@ body::before {
 </div>
 
 <script>
+// ── Theme toggle ──────────────────────────────────────────────────────────────
+(function() {
+  const saved = localStorage.getItem("imx500-theme") || "dark";
+  applyTheme(saved);
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    const track = document.getElementById("toggle-track");
+    const label = document.getElementById("theme-label");
+    if (!track || !label) return;
+    if (theme === "dark") {
+      track.classList.add("on");
+      label.textContent = "Dark";
+    } else {
+      track.classList.remove("on");
+      label.textContent = "Light";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", function() {
+    const track = document.getElementById("toggle-track");
+    if (!track) return;
+    // Re-apply so DOM elements exist now
+    applyTheme(localStorage.getItem("imx500-theme") || "dark");
+    track.addEventListener("click", function() {
+      const current = document.documentElement.getAttribute("data-theme");
+      const next = current === "dark" ? "light" : "dark";
+      localStorage.setItem("imx500-theme", next);
+      applyTheme(next);
+    });
+  });
+})();
+
 const COLORS = ["#22d3a8","#60a5fa","#fbbf24","#f472b6","#a78bfa","#34d399","#fb923c","#94a3b8"];
 
 function fmtDate(iso) {
@@ -745,7 +739,12 @@ function renderChart(days) {
   }).join("");
 }
 
-function renderDays(days, allLabels) {
+function renderDays(days) {
+  const allLabels = [];
+  days.forEach(d => Object.keys(d.labels).forEach(l => {
+    if (!allLabels.includes(l)) allLabels.push(l);
+  }));
+  allLabels.sort();
 
   const maxTotal = Math.max(...days.map(d => d.total), 1);
   const list     = document.getElementById("day-list");
@@ -813,76 +812,6 @@ function showError(msg) {
     `<div class="empty"><strong>No data available</strong>${msg}</div>`;
 }
 
-function renderConfidence(labelsData, allLabels) {
-  const grid = document.getElementById("conf-grid");
-  if (!labelsData || !Object.keys(labelsData).length) {
-    grid.innerHTML = `<div class="conf-no-data" style="grid-column:1/-1">No confidence data available yet.</div>`;
-    return;
-  }
-
-  // Confidence values span 0–1 but in practice cluster 0.40–0.70.
-  // We pin the track to [0.35, 0.75] so differences are visible without
-  // collapsing everything to the centre. Values outside this range are clamped.
-  const TRACK_MIN = 0.35;
-  const TRACK_MAX = 0.75;
-  const trackSpan = TRACK_MAX - TRACK_MIN;
-
-  function pct(v) {
-    return Math.min(100, Math.max(0, ((v - TRACK_MIN) / trackSpan) * 100));
-  }
-
-  grid.innerHTML = Object.entries(labelsData).map(([label, stats]) => {
-    const color = colorFor(label, allLabels);
-    const totalStr = stats.total.toLocaleString() + " events";
-
-    if (stats.min_conf == null) {
-      return `
-        <div class="conf-card">
-          <div class="conf-card-header">
-            <div class="conf-swatch" style="background:${color}"></div>
-            <div class="conf-label-name">${label}</div>
-            <div class="conf-total">${totalStr}</div>
-          </div>
-          <div class="conf-no-data">no confidence data</div>
-        </div>`;
-    }
-
-    const minPct    = pct(stats.min_conf);
-    const maxPct    = pct(stats.max_conf);
-    const medPct    = pct(stats.median_conf);
-    const bandWidth = maxPct - minPct;
-
-    return `
-      <div class="conf-card">
-        <div class="conf-card-header">
-          <div class="conf-swatch" style="background:${color}"></div>
-          <div class="conf-label-name">${label}</div>
-          <div class="conf-total">${totalStr}</div>
-        </div>
-        <div class="conf-range-wrap">
-          <div class="conf-track">
-            <div class="conf-band" style="left:${minPct}%;width:${bandWidth}%;background:${color}"></div>
-            <div class="conf-median-tick" style="left:${medPct}%;background:${color};opacity:0.9"></div>
-          </div>
-          <div class="conf-axis">
-            <div class="conf-axis-item">
-              <span class="conf-val">${stats.min_conf.toFixed(3)}</span>
-              <span class="conf-axis-label">min</span>
-            </div>
-            <div class="conf-axis-item median">
-              <span class="conf-val">${stats.median_conf.toFixed(3)}</span>
-              <span class="conf-axis-label">median</span>
-            </div>
-            <div class="conf-axis-item" style="align-items:flex-end">
-              <span class="conf-val">${stats.max_conf.toFixed(3)}</span>
-              <span class="conf-axis-label">max</span>
-            </div>
-          </div>
-        </div>
-      </div>`;
-  }).join("");
-}
-
 async function init() {
   const now = new Date();
   document.getElementById("updated-at").textContent =
@@ -901,16 +830,9 @@ async function init() {
       return;
     }
 
-    const allLabels = [];
-    days.forEach(d => Object.keys(d.labels).forEach(l => {
-      if (!allLabels.includes(l)) allLabels.push(l);
-    }));
-    allLabels.sort();
-
     renderStats(days);
     renderChart(days);
-    renderDays(days, allLabels);
-    renderConfidence(data.labels || {}, allLabels);
+    renderDays(days);
 
     // Auto-open today's card if present
     const todayIdx = days.findIndex(d => isToday(d.date));
