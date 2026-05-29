@@ -106,6 +106,36 @@ check_disk_space() {
     return 0
 }
 
+### Ensure disk-backed swap exists (Pi Zero 2W OOM guard)
+ensure_swap() {
+    log "INFO" "Checking for disk-backed swap..."
+
+    if swapon --show | grep -q "^/swapfile"; then
+        log "INFO" "Disk-backed swap already active at /swapfile — skipping"
+        return 0
+    fi
+
+    if [[ -f /swapfile ]]; then
+        log "INFO" "/swapfile exists but is not active — activating..."
+        swapon /swapfile
+        log "INFO" "Swap activated"
+    else
+        log "INFO" "Creating 1G swapfile at /swapfile..."
+        fallocate -l 1G /swapfile
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+        log "INFO" "Swapfile created and activated"
+    fi
+
+    if ! grep -q '^/swapfile' /etc/fstab; then
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        log "INFO" "Added /swapfile to /etc/fstab for persistence"
+    else
+        log "INFO" "/swapfile already in /etc/fstab"
+    fi
+}
+
 ################################################################################
 ### Parse Command Line Arguments
 ################################################################################
@@ -513,6 +543,11 @@ log "INFO" "Virtual environment: $VENV_DIR"
 log "INFO" "System site-packages: enabled (required for picamera2)"
 log "INFO" "Apt packages: ${#APT_PACKAGES[@]}"
 log "INFO" "Pip packages: ${#REQUIREMENTS[@]}"
+
+### Ensure swap (guards against OOM during large apt installs on Pi Zero 2W)
+if ! ensure_swap; then
+    log "WARN" "Could not ensure disk-backed swap — continuing anyway, but install may OOM on low-memory devices"
+fi
 
 ### Install system packages
 if ! install_system_packages; then
