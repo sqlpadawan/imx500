@@ -425,7 +425,8 @@ verify_packages() {
 
     # Verify python3-libcamera (apt-installed, visible via --system-site-packages)
     log "INFO" "Checking libcamera..."
-    if sudo -u "$ACTUAL_USER" bash -c "source '$VENV_DIR/bin/activate' && python3 -c 'import libcamera; print(\"libcamera version:\", libcamera.__version__)'" 2>&1 | tee -a "$LOG_FILE"; then
+    # Note: libcamera does not expose __version__ on all builds; test import only
+    if sudo -u "$ACTUAL_USER" bash -c "source '$VENV_DIR/bin/activate' && python3 -c 'import libcamera; print(\"libcamera OK\")'" 2>&1 | tee -a "$LOG_FILE"; then
         log "INFO" "libcamera verified"
     else
         log "ERROR" "libcamera not importable — ensure python3-libcamera is installed and venv uses --system-site-packages"
