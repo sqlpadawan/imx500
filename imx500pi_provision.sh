@@ -129,11 +129,11 @@ fi
 ################################################################################
 ### 2a. Enable User Lingering
 ################################################################################
-log "INFO" "Enabling user lingering for $ACTUAL_USER..."
-if loginctl enable-linger "$ACTUAL_USER"; then
+log "INFO" "Enabling user lingering for $USERNAME..."
+if loginctl enable-linger "$USERNAME"; then
     log "INFO" "Lingering enabled — user systemd instance will run at boot without login"
 else
-    log "ERROR" "Failed to enable lingering for $ACTUAL_USER"
+    log "ERROR" "Failed to enable lingering for $USERNAME"
     exit 1
 fi
 
