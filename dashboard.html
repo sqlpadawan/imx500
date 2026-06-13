@@ -605,6 +605,107 @@ html[data-theme="light"] body::before { opacity: 0; }
   text-align: right;
 }
 
+/* ── Label confidence section ── */
+.conf-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.conf-header-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 52px 52px 52px;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.conf-header-cell {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.conf-header-cell:first-child { text-align: left; }
+.conf-header-cell.range-cell  { text-align: left; }
+
+.conf-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 52px 52px 52px;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 20px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.conf-row:last-child { border-bottom: none; }
+.conf-row:hover { background: var(--surface-2); }
+
+.conf-label-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.conf-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* Range track: shows the min–max span with a median tick */
+.conf-range-track {
+  position: relative;
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+}
+
+.conf-range-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+  opacity: 0.45;
+}
+
+.conf-median-tick {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 12px;
+  border-radius: 1px;
+  opacity: 0.9;
+  transform: translateX(-50%);
+}
+
+.conf-val {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.conf-val.med { color: var(--text); font-weight: 500; }
+
+@media (max-width: 640px) {
+  .conf-header-row,
+  .conf-row { grid-template-columns: 90px 1fr 44px 44px; }
+  .conf-header-cell.hide-mobile,
+  .conf-val.hide-mobile { display: none; }
+}
+
 /* ── Theme toggle ── */
 .theme-toggle {
   display: flex;
@@ -703,6 +804,9 @@ html[data-theme="light"] body::before { opacity: 0; }
 
   <div class="section-label">All-time by label</div>
   <div class="label-summary-wrap" id="label-summary"></div>
+
+  <div class="section-label">Label confidence</div>
+  <div class="conf-wrap" id="conf-wrap"></div>
 
   <footer class="footer">
     <div class="footer-links">
@@ -904,6 +1008,78 @@ function renderLabelSummary(days) {
   }).join("");
 }
 
+function renderLabelConfidence(labelsData) {
+  const wrap = document.getElementById("conf-wrap");
+  if (!labelsData || !Object.keys(labelsData).length) {
+    wrap.innerHTML = '<div class="empty"><strong>No confidence data</strong>Run build_summary.py to generate.</div>';
+    return;
+  }
+
+  // allLabels sorted list for consistent color assignment
+  const allLabels = Object.keys(labelsData).slice().sort();
+
+  // Determine the global min/max across all labels for range scaling
+  let globalMin = 1.0, globalMax = 0.0;
+  Object.values(labelsData).forEach(d => {
+    if (d.conf_min !== null) globalMin = Math.min(globalMin, d.conf_min);
+    if (d.conf_max !== null) globalMax = Math.max(globalMax, d.conf_max);
+  });
+  const span = globalMax - globalMin || 0.01;
+
+  const headerHtml = `
+    <div class="conf-header-row">
+      <div class="conf-header-cell">Label</div>
+      <div class="conf-header-cell range-cell">Min — Med — Max</div>
+      <div class="conf-header-cell hide-mobile">Min</div>
+      <div class="conf-header-cell">Med</div>
+      <div class="conf-header-cell">Max</div>
+    </div>
+  `;
+
+  // labelsData already sorted by count desc from build_summary.py
+  const rowsHtml = Object.entries(labelsData).map(([name, d]) => {
+    const color = colorFor(name, allLabels);
+
+    if (d.conf_min === null) {
+      return `
+        <div class="conf-row">
+          <div class="conf-label-name">
+            <div class="conf-swatch" style="background:${color}"></div>
+            ${name}
+          </div>
+          <div class="conf-range-track"></div>
+          <div class="conf-val hide-mobile">—</div>
+          <div class="conf-val med">—</div>
+          <div class="conf-val">—</div>
+        </div>
+      `;
+    }
+
+    // Position fill and tick relative to global range
+    const fillLeft  = ((d.conf_min - globalMin) / span * 100).toFixed(1);
+    const fillWidth = ((d.conf_max - d.conf_min) / span * 100).toFixed(1);
+    const tickLeft  = ((d.conf_med - globalMin) / span * 100).toFixed(1);
+
+    return `
+      <div class="conf-row">
+        <div class="conf-label-name">
+          <div class="conf-swatch" style="background:${color}"></div>
+          ${name}
+        </div>
+        <div class="conf-range-track" title="${name}: min ${d.conf_min} · med ${d.conf_med} · max ${d.conf_max}">
+          <div class="conf-range-fill"  style="left:${fillLeft}%;width:${fillWidth}%;background:${color}"></div>
+          <div class="conf-median-tick" style="left:${tickLeft}%;background:${color}"></div>
+        </div>
+        <div class="conf-val hide-mobile">${d.conf_min.toFixed(3)}</div>
+        <div class="conf-val med">${d.conf_med.toFixed(3)}</div>
+        <div class="conf-val">${d.conf_max.toFixed(3)}</div>
+      </div>
+    `;
+  }).join("");
+
+  wrap.innerHTML = headerHtml + rowsHtml;
+}
+
 function toggleDay(header) {
   const idx  = header.dataset.idx;
   const grid = document.getElementById("labels-" + idx);
@@ -939,6 +1115,7 @@ async function init() {
     renderChart(days);
     renderDays(days);
     renderLabelSummary(days);
+    renderLabelConfidence(data.labels || {});
 
     // Auto-open today's card if present
     const todayIdx = days.findIndex(d => isToday(d.date));

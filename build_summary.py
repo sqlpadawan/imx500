@@ -18,24 +18,18 @@ import json
 import os
 from collections import defaultdict
 from pathlib import Path
+from statistics import median
 
 LOG_DIR_DEFAULT = Path("/var/log/imx500")
 OUT_DEFAULT     = LOG_DIR_DEFAULT / "summary.json"
 
 
-def _median(values: list) -> float:
-    """Return the median of a sorted or unsorted list of floats."""
-    s = sorted(values)
-    n = len(s)
-    mid = n // 2
-    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
-
-
 def summarize(log_dir: Path, out_path: Path) -> None:
     # day → label → count
     counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    # label → list of confidence floats (across all days)
-    conf_values: dict[str, list] = defaultdict(list)
+
+    # label → [confidence, ...] across all days (for all-time confidence stats)
+    label_confs: dict[str, list[float]] = defaultdict(list)
 
     log_files = sorted(log_dir.glob("events.jsonl*"))
     if not log_files:
@@ -59,20 +53,16 @@ def summarize(log_dir: Path, out_path: Path) -> None:
                     if record.get("event") != "enter":
                         continue
 
-                    ts    = record.get("ts", "")
-                    label = record.get("label", "unknown")
+                    ts         = record.get("ts", "")
+                    label      = record.get("label", "unknown")
+                    confidence = record.get("confidence")
 
                     # Extract date portion from ISO timestamp (YYYY-MM-DD)
                     date = ts[:10] if len(ts) >= 10 else "unknown"
                     counts[date][label] += 1
 
-                    # Accumulate confidence for global label stats
-                    conf = record.get("confidence")
-                    if conf is not None:
-                        try:
-                            conf_values[label].append(float(conf))
-                        except (TypeError, ValueError):
-                            pass
+                    if isinstance(confidence, (int, float)):
+                        label_confs[label].append(float(confidence))
 
         except OSError as e:
             print(f"[build_summary] Error reading {log_file}: {e}")
@@ -88,21 +78,21 @@ def summarize(log_dir: Path, out_path: Path) -> None:
             "labels": dict(sorted(label_counts.items(), key=lambda x: x[1], reverse=True)),
         })
 
-    # Build global per-label confidence stats, sorted by total count descending
-    all_label_counts = defaultdict(int)
+    # Build all-time per-label confidence stats, sorted by count descending
+    all_label_counts = {}
     for day in days:
         for label, count in day["labels"].items():
-            all_label_counts[label] += count
+            all_label_counts[label] = all_label_counts.get(label, 0) + count
 
     labels_out = {}
     for label in sorted(all_label_counts, key=lambda l: all_label_counts[l], reverse=True):
-        vals = conf_values.get(label, [])
-        entry: dict = {"total": all_label_counts[label]}
-        if vals:
-            entry["min_conf"]    = round(min(vals), 3)
-            entry["median_conf"] = round(_median(vals), 3)
-            entry["max_conf"]    = round(max(vals), 3)
-        labels_out[label] = entry
+        confs = label_confs.get(label, [])
+        labels_out[label] = {
+            "count":    all_label_counts[label],
+            "conf_min": round(min(confs), 3) if confs else None,
+            "conf_med": round(median(confs), 3) if confs else None,
+            "conf_max": round(max(confs), 3) if confs else None,
+        }
 
     summary = {"days": days, "labels": labels_out}
 
@@ -110,7 +100,7 @@ def summarize(log_dir: Path, out_path: Path) -> None:
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
-    print(f"[build_summary] Wrote {len(days)} day(s) to {out_path}")
+    print(f"[build_summary] Wrote {len(days)} day(s) and {len(labels_out)} label(s) to {out_path}")
 
 
 def main() -> None:
