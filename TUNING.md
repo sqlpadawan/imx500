@@ -45,10 +45,11 @@ Look for:
 
 ## Layer 1 — Confidence Threshold
 
-**Where:** `imx500_capture.py`, argparse default
+**Where:** `imx500_capture.py`, argparse default — overridden at runtime via
+the `--threshold` flag in the `imx500_capture.service` unit
 
 ```python
-parser.add_argument("--threshold", type=float, default=0.42)
+parser.add_argument("--threshold", type=float, default=0.40)
 ```
 
 **What it does:** The model scores every detected object 0–1. Detections below
@@ -68,7 +69,10 @@ primary and most powerful filter.
   comfortable headroom above the noise floor.
 - Test by running a full day and re-running the diagnostic query above.
 
-**Current value:** `0.42`
+**Current value:** `0.42`, passed via `--threshold` in the systemd service
+unit. The code's own argparse default (`0.40`) is only used when running
+`imx500_capture.py` manually without that flag — keep this in mind if you
+ever test outside the service, since the untuned default will apply.
 
 ---
 

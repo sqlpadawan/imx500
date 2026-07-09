@@ -313,6 +313,26 @@ install_system_packages() {
         fi
     done
 
+    # ── libcamera-v4l2 conflict guard ──────────────────────────────────
+    # libcamera-v4l2 installs a V4L2 compatibility shim that claims the
+    # unicam device node at boot, preventing picamera2/libcamera from ever
+    # acquiring the IMX500 camera — with no obvious error, just a camera
+    # that silently isn't detected. It can arrive as a dependency of other
+    # camera-related packages (e.g. libcamera-apps), so check for it on
+    # every run rather than assuming a clean image.
+    if dpkg -s libcamera-v4l2 &>/dev/null; then
+        log "WARN" "libcamera-v4l2 is installed — conflicts with picamera2/IMX500 camera access"
+        log "INFO" "Removing libcamera-v4l2..."
+        if apt-get remove -y libcamera-v4l2 2>&1 | tee -a "$LOG_FILE"; then
+            log "INFO" "libcamera-v4l2 removed successfully"
+        else
+            log "ERROR" "Failed to remove libcamera-v4l2 — camera will likely fail to be detected"
+            return 1
+        fi
+    else
+        log "INFO" "libcamera-v4l2 not present (expected — no camera conflict)"
+    fi
+
     log "INFO" "All system packages installed"
 }
 
