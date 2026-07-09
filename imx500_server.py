@@ -23,7 +23,7 @@ import socket
 import struct
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import websockets
@@ -221,7 +221,7 @@ def run_http_server(local_ip: str) -> None:
         _dashboard_html_cache = b"<p>dashboard.html not found in repo directory</p>"
 
     print(f"[server] HTTP listening on port {HTTP_PORT}")
-    server = HTTPServer(("0.0.0.0", HTTP_PORT), PageHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), PageHandler)
     server.serve_forever()
 
 
