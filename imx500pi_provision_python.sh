@@ -576,7 +576,9 @@ fi
 
 ### Verify packages
 if ! verify_packages; then
-    log "WARN" "Some package verifications failed, but continuing..."
+    log "ERROR" "Package verification failed — one or more critical packages did not import successfully"
+    log "ERROR" "Setup cannot be considered complete with a broken environment. Review the errors above, fix them, and re-run this script."
+    exit 1
 fi
 
 ### Set proper ownership

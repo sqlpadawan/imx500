@@ -81,7 +81,13 @@ _event_logger.addHandler(_log_handler)
 #                     movement at street speed.
 #   MIN_CONSECUTIVE — frames a new detection must appear before logging "enter"
 #   MAX_MISSED      — frames a confirmed track can go unmatched before "exit"
-#   COOLDOWN_S      — minimum seconds between "enter" events for the same label
+#   COOLDOWN_S      — suppresses a new "enter" event for `label` if a track of
+#                     the same label exited within COOLDOWN_S seconds AND
+#                     within MAX_DIST px of the new detection's position.
+#                     This catches a single physical object whose track
+#                     flickered (briefly lost, re-promoted as a new synthetic
+#                     track ID) without suppressing a genuinely different
+#                     object of the same label elsewhere in frame.
 
 import uuid as _uuid_mod
 
@@ -102,7 +108,10 @@ LABEL_NORMALIZE: dict[str, str] = {
 # _pending: temp_id  → {label, conf, cx, cy, bbox, count}
 _tracked:      dict = {}
 _pending:      dict = {}
-_cooldown:     dict = {}
+# _recent_exits: [(label, cx, cy, exit_time), ...] — recently-exited tracks,
+# used to suppress a re-"enter" from the same flickering object (see
+# COOLDOWN_S above). Pruned in _log_event() on every "enter" check.
+_recent_exits: list = []
 _tracked_lock        = threading.Lock()
 
 
@@ -145,12 +154,24 @@ def _find_nearest_same_label(pool: dict, label: str, cx: float, cy: float) -> st
 
 
 def _log_event(event: str, label: str, confidence: float,
-               bbox: tuple, track_key: str, dwell_s: float = None) -> None:
+               bbox: tuple, track_key: str, cx: float = None,
+               cy: float = None, dwell_s: float = None) -> None:
+    now = time.monotonic()
+
     if event == "enter":
-        last = _cooldown.get(label, 0)
-        if time.monotonic() - last < COOLDOWN_S:
-            return
-        _cooldown[label] = time.monotonic()
+        # Prune stale entries first.
+        _recent_exits[:] = [e for e in _recent_exits if now - e[3] < COOLDOWN_S]
+
+        # Suppress this "enter" only if a same-label track exited recently
+        # AND near this position — i.e. likely the same physical object
+        # whose track flickered, not a distinct object of the same label.
+        if cx is not None and cy is not None:
+            for ex_label, ex_cx, ex_cy, _ in _recent_exits:
+                if ex_label == label and _center_dist(cx, cy, ex_cx, ex_cy) < MAX_DIST:
+                    return
+
+    if event == "exit" and cx is not None and cy is not None:
+        _recent_exits.append((label, cx, cy, now))
 
     record = {
         "ts":         datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
@@ -219,7 +240,8 @@ def update_tracking(detections, labels) -> None:
                     "enter_ts": time.monotonic(),
                     "missed":   0,
                 }
-                _log_event("enter", obj["label"], obj["conf"], obj["bbox"], tid)
+                _log_event("enter", obj["label"], obj["conf"], obj["bbox"], tid,
+                           cx=obj["cx"], cy=obj["cy"])
                 matched_track_ids.add(tid)
 
         # Increment missed counter for unmatched confirmed tracks
@@ -230,7 +252,7 @@ def update_tracking(detections, labels) -> None:
                     t = _tracked.pop(tid)
                     dwell = time.monotonic() - t["enter_ts"]
                     _log_event("exit", t["label"], t["conf"], t["bbox"],
-                               tid, dwell_s=dwell)
+                               tid, cx=t["cx"], cy=t["cy"], dwell_s=dwell)
 
         # Drop stale pending candidates that weren't seen this frame
         for pid in list(_pending):

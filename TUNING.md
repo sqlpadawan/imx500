@@ -168,7 +168,7 @@ enter the pending or confirmed track pools.
 MAX_DIST        = 160   # px — proximity radius for matching detections to tracks
 MIN_CONSECUTIVE = 2     # frames a detection must appear before logging "enter"
 MAX_MISSED      = 8     # frames a track can go unmatched before logging "exit"
-COOLDOWN_S      = 10    # minimum seconds between "enter" events for the same label
+COOLDOWN_S      = 10    # suppression window (s) for a re-"enter" near a recent exit
 ```
 
 **What each does and how to tune:**
@@ -202,14 +202,35 @@ If you see premature `exit` events for objects that are still in frame,
 increase this value.
 
 ### COOLDOWN_S
-After an `enter` event is logged for a given label, no further `enter` events
-for that label will be logged until this many seconds have elapsed. This
-prevents a single slow-moving vehicle from generating dozens of enter events
-as it traverses the frame.
+When a track is confirmed and about to log an `enter` event, this checks
+whether a track of the **same label** exited within the last `COOLDOWN_S`
+seconds **and** within `MAX_DIST` pixels of the new detection's position. If
+so, the `enter` is suppressed. This is meant to catch a single physical
+object whose track briefly flickered — lost for a frame or two (e.g. a
+missed detection, momentary occlusion) and then re-promoted as a new
+synthetic track ID — without treating it as a second, distinct object.
+
+This is *not* a blanket per-label throttle. Two genuinely different vehicles
+of the same label passing through different parts of the frame within the
+same 10-second window will each still log their own `enter`/`exit` pair,
+since they won't be spatially close to a recent exit. (Earlier versions of
+this project used a simpler global per-label cooldown, which had the side
+effect of dropping the second vehicle's `enter` event entirely in that case
+— fixed as of the track-position-aware version.)
 
 `10` seconds is appropriate for a residential street where vehicles pass
 through the frame in 3–10 seconds. For a wider scene where vehicles may be
-visible for longer, increase this.
+visible for longer, increase this. Note that the exit-matching radius is
+currently reused from `MAX_DIST`, which was originally tuned for
+frame-to-frame movement rather than "is this the same spot a vehicle exited
+from a few seconds ago" — if you see flickered tracks slipping through as
+duplicate `enter` events, or conversely two genuinely distinct vehicles
+being incorrectly merged, consider giving this its own dedicated radius
+constant instead of sharing `MAX_DIST`.
+
+Since this changes what counts as a duplicate, treat it like any other
+tracking parameter change: adjust one variable, review `events.jsonl` for a
+day or two, then move on to the next change.
 
 ---
 

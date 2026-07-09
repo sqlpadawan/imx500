@@ -187,6 +187,21 @@ add_or_update_config() {
 # which prevents libcamera and picamera2 from seeing the camera entirely.
 add_or_update_config "gpu_mem" "128"
 
+# ─────────────────────────────────────────────────────────────────
+# IMX500 camera overlay (required)
+#
+# Explicitly loads the IMX500 sensor + on-sensor AI accelerator via
+# device tree overlay. Do NOT rely on camera_auto_detect=1 for this —
+# auto-detect has proven unreliable for the IMX500 on Debian Trixie,
+# and a silent failure here means the Pi boots fine but picamera2
+# can't see the camera or its inference output at all (no error,
+# just an empty CSI connector as far as the kernel is concerned).
+#
+# Takes effect on next reboot only (device tree overlays are read
+# at boot time, not hot-reloadable).
+# ─────────────────────────────────────────────────────────────────
+add_or_update_config "dtoverlay" "imx500"
+
 log "INFO" "Boot configuration optimized"
 
 ################################################################################
