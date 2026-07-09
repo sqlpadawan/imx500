@@ -22,6 +22,7 @@ import struct
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime, timezone
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
@@ -366,44 +367,48 @@ def get_labels():
 
 def draw_detections(request, stream="main") -> None:
     """Draw bounding boxes, update tracking, send frame to server."""
-    detections = last_results
-    if detections is None:
-        return
-    labels = get_labels()
-    frame  = request.make_array(stream)
+    try:
+        detections = last_results
+        if detections is None:
+            return
+        labels = get_labels()
+        frame  = request.make_array(stream)
 
-    for detection in detections:
-        x, y, w, h = detection.box
-        label = f"{labels[int(detection.category)]} ({detection.conf:.2f})"
+        for detection in detections:
+            x, y, w, h = detection.box
+            label = f"{labels[int(detection.category)]} ({detection.conf:.2f})"
 
-        (text_width, text_height), baseline = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        text_x = x + 5
-        text_y = y + 15
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            text_x = x + 5
+            text_y = y + 15
 
-        overlay = frame.copy()
-        cv2.rectangle(overlay,
-                      (text_x, text_y - text_height),
-                      (text_x + text_width, text_y + baseline),
-                      (255, 255, 255), cv2.FILLED)
-        cv2.addWeighted(overlay, 0.30, frame, 0.70, 0, frame)
-        cv2.putText(frame, label, (text_x, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0, 0), thickness=2)
+            overlay = frame.copy()
+            cv2.rectangle(overlay,
+                          (text_x, text_y - text_height),
+                          (text_x + text_width, text_y + baseline),
+                          (255, 255, 255), cv2.FILLED)
+            cv2.addWeighted(overlay, 0.30, frame, 0.70, 0, frame)
+            cv2.putText(frame, label, (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0, 0), thickness=2)
 
-    if intrinsics.preserve_aspect_ratio:
-        b_x, b_y, b_w, b_h = imx500.get_roi_scaled(request)
-        cv2.putText(frame, "ROI", (b_x + 5, b_y + 15),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-        cv2.rectangle(frame, (b_x, b_y), (b_x + b_w, b_y + b_h), (255, 0, 0, 0))
+        if intrinsics.preserve_aspect_ratio:
+            b_x, b_y, b_w, b_h = imx500.get_roi_scaled(request)
+            cv2.putText(frame, "ROI", (b_x + 5, b_y + 15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+            cv2.rectangle(frame, (b_x, b_y), (b_x + b_w, b_y + b_h), (255, 0, 0, 0))
 
-    # Update event tracking and log enter/exit transitions
-    update_tracking(detections, labels)
+        # Update event tracking and log enter/exit transitions
+        update_tracking(detections, labels)
 
-    # Encode and send to server
-    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-    if ok:
-        send_frame(buf.tobytes())
+        # Encode and send to server
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        if ok:
+            send_frame(buf.tobytes())
+    except Exception:
+        print("[capture] Error in draw_detections — skipping frame", file=sys.stderr)
+        traceback.print_exc()
 
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
@@ -475,4 +480,9 @@ if __name__ == "__main__":
     last_results = None
     picam2.pre_callback = draw_detections
     while True:
-        last_results = parse_detections(picam2.capture_metadata())
+        try:
+            last_results = parse_detections(picam2.capture_metadata())
+        except Exception:
+            print("[capture] Error parsing frame metadata — skipping frame", file=sys.stderr)
+            traceback.print_exc()
+            time.sleep(0.05)
