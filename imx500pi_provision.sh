@@ -159,11 +159,17 @@ else
 fi
 
 # Function to safely add or update config entries
+# NOTE: Only safe for keys that appear at most once in config.txt (e.g. gpu_mem).
+# Do NOT use this for "dtoverlay" — config.txt legitimately supports many
+# distinct dtoverlay= lines side by side, and this function assumes a single
+# canonical line per key, which would collapse/overwrite unrelated overlays.
+# Use add_or_update_dtoverlay() for overlay lines instead.
 add_or_update_config() {
     local key="$1"
     local value="$2"
     local entry="${key}=${value}"
 
+    # Validate key format
     if ! [[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
         log "WARN" "Invalid config key format: $key"
         return 1
@@ -173,9 +179,47 @@ add_or_update_config() {
     match_count=$(grep -c "^${key}=" "$CONFIG_FILE" || true)
 
     if [[ "$match_count" -gt 0 ]]; then
+        # Remove any existing entry/entries for this key, then write exactly
+        # one canonical line. This self-heals cases where duplicates already
+        # accumulated (e.g. from a prior partial/rerun of this script).
         sed -i "/^${key}=/d" "$CONFIG_FILE"
         echo "$entry" >> "$CONFIG_FILE"
         log "INFO" "Replaced ${match_count} existing '${key}=' entry(ies) with: $entry"
+    else
+        echo "$entry" >> "$CONFIG_FILE"
+        log "INFO" "Added: $entry"
+    fi
+}
+
+# Function to safely add or update a specific dtoverlay entry.
+# Matches by overlay NAME (e.g. "imx500", "vc4-kms-v3d"), not the bare
+# "dtoverlay" key, so multiple distinct overlays can coexist in config.txt.
+# Re-running this for the same overlay name replaces only that overlay's
+# line (including updating its parameters), leaving other dtoverlay= lines
+# untouched.
+add_or_update_dtoverlay() {
+    local overlay_name="$1"
+    local overlay_params="${2:-}"
+    local entry
+
+    if ! [[ "$overlay_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log "WARN" "Invalid overlay name format: $overlay_name"
+        return 1
+    fi
+
+    if [[ -n "$overlay_params" ]]; then
+        entry="dtoverlay=${overlay_name},${overlay_params}"
+    else
+        entry="dtoverlay=${overlay_name}"
+    fi
+
+    local match_count
+    match_count=$(grep -cE "^dtoverlay=${overlay_name}(,.*)?\$" "$CONFIG_FILE" || true)
+
+    if [[ "$match_count" -gt 0 ]]; then
+        sed -i -E "/^dtoverlay=${overlay_name}(,.*)?\$/d" "$CONFIG_FILE"
+        echo "$entry" >> "$CONFIG_FILE"
+        log "INFO" "Replaced ${match_count} existing 'dtoverlay=${overlay_name}...' entry(ies) with: $entry"
     else
         echo "$entry" >> "$CONFIG_FILE"
         log "INFO" "Added: $entry"
@@ -200,7 +244,31 @@ add_or_update_config "gpu_mem" "128"
 # Takes effect on next reboot only (device tree overlays are read
 # at boot time, not hot-reloadable).
 # ─────────────────────────────────────────────────────────────────
-add_or_update_config "dtoverlay" "imx500"
+add_or_update_dtoverlay "imx500"
+
+# ─────────────────────────────────────────────────────────────────
+# CMA (contiguous memory) pool size (required)
+#
+# The default 64MiB CMA pool is too small for the IMX500 camera stack's
+# buffer requirements — picamera2 fails with "Could not open any dmaHeap
+# device" / OSError: Cannot allocate memory (ENOMEM) on dma-heap alloc.
+#
+# This MUST be set via a dtoverlay,cma-N parameter (not the "cma=" kernel
+# cmdline.txt parameter). Setting CMA size via cmdline.txt causes the
+# kernel to expose the heap under a fallback devtmpfs name (e.g.
+# "reserved" or "default_cma_region") instead of "linux,cma" — and
+# picamera2's Python DmaHeap allocator (dma_heap.py) has a hardcoded,
+# unfallback-able heap name list that expects "linux,cma" (or its
+# "vidbuf_cached" symlink). The dtoverlay approach preserves the DT node
+# name, which is why vc4-kms-v3d is used here instead — this is currently
+# the only in-tree overlay mechanism for sizing the DT-bound CMA heap.
+#
+# 128MiB was sufficient on a Pi Zero 2W (512MB RAM total); increase if
+# a future sensor/resolution change needs more. Be conservative — this
+# is a memory-constrained board (~352MB available to Linux with
+# gpu_mem=128), and CMA size is shared from the same pool.
+# ─────────────────────────────────────────────────────────────────
+add_or_update_dtoverlay "vc4-kms-v3d" "cma-128"
 
 log "INFO" "Boot configuration optimized"
 
@@ -308,7 +376,7 @@ log "INFO" "Script Version: $SCRIPT_VERSION"
 log "INFO" "User: $USERNAME"
 log "INFO" "Camera Interface: Enabled"
 log "INFO" "Video Group: $USERNAME added"
-log "INFO" "Boot Config: Optimized for headless (gpu_mem=128)"
+log "INFO" "Boot Config: Optimized for headless (gpu_mem=128, dtoverlay=vc4-kms-v3d,cma-128)"
 log "INFO" "WiFi Power Mgmt: Disabled (prevents SSH keystroke lag)"
 log "INFO" "Log Directory: $LOG_DIR (owned by $USERNAME)"
 log "INFO" "Log Rotation: Configured"

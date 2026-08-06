@@ -277,3 +277,74 @@ imx500 restart imx500_capture.service
 
 Avoid changing multiple parameters at once — one change per day makes it easy
 to attribute any improvement or regression to a specific adjustment.
+
+---
+
+## Appendix: Camera Fails to Start — dmaHeap / CMA Allocation Errors
+
+This isn't a tuning parameter, but it's a boot-configuration issue that can
+block capture entirely, discovered during a Pi Zero 2W reflash — documented
+here so it doesn't need re-diagnosing from scratch next time.
+
+**Symptom:** `imx500_capture.service` crash-loops immediately after start.
+`wrapper.log` shows repeated `Capture PID: N` / `Capture script exited
+unexpectedly — restarting in 10s` cycles every ~5 seconds. The traceback
+(visible via `imx500 status imx500_capture.service` or
+`/var/log/imx500/wrapper.log`) ends in one of:
+
+```
+OSError: [Errno 12] Cannot allocate memory
+```
+or, after a partial fix:
+```
+RuntimeError: Could not open any dmaHeap device
+```
+
+**Root cause (two layered issues):**
+
+1. **CMA pool too small.** The Raspberry Pi's default CMA (contiguous
+   memory) reservation — 64 MiB — isn't enough for the IMX500 camera
+   stack's buffer requirements. `dmesg | grep -i cma` shows a failed
+   allocation (`cma: __cma_alloc: linux,cma: alloc failed`) with a heavily
+   fragmented free-page list.
+
+2. **Device node naming.** picamera2's Python `DmaHeap` allocator
+   (`dma_heap.py`) has a hardcoded, non-fallback heap name list:
+   `["/dev/dma_heap/vidbuf_cached", "/dev/dma_heap/linux,cma"]`. If the CMA
+   pool is resized via the kernel `cma=` cmdline.txt parameter, the kernel
+   exposes the heap under a different devtmpfs name (`reserved` or
+   `default_cma_region`) instead of `linux,cma` — and picamera2 has no
+   fallback for that naming scheme, so it fails to open any heap even
+   though a correctly-sized pool exists right next to it.
+
+**Fix:** Size the CMA pool via a `dtoverlay` parameter in `config.txt`
+instead of the `cma=` cmdline.txt parameter — this preserves the DT-bound
+`linux,cma` device name that picamera2 expects:
+
+```
+dtoverlay=vc4-kms-v3d,cma-128
+```
+
+This is now provisioned automatically by `imx500pi_provision.sh` (added
+alongside `gpu_mem=128` and `dtoverlay=imx500`), so a fresh reflash should
+not hit this. If it recurs — e.g. after manually editing `config.txt`, or
+if a future sensor/resolution change needs more buffer headroom — verify
+with:
+
+```bash
+grep -E "gpu_mem|dtoverlay=imx500|dtoverlay=vc4-kms-v3d" /boot/firmware/config.txt
+ls -la /dev/dma_heap/    # should list "linux,cma" (and a "vidbuf_cached" symlink)
+```
+
+Note this adds the `vc4-kms-v3d` KMS graphics driver, which is heavier than
+strictly needed on a headless, display-less Pi — there is currently no
+lighter-weight overlay that resizes the DT-bound CMA heap without it (per
+Raspberry Pi engineering guidance, DT-based CMA sizing is only wired into
+the KMS/FKMS overlays). The alternative — patching picamera2's
+`heapNames` list to add a `reserved` fallback — avoids the extra driver but
+lives in an apt-managed file that would be silently reverted by a future
+`python3-picamera2` upgrade, so it wasn't used here.
+
+128 MiB was sufficient on this Pi Zero 2W (512MB total RAM). Increase only
+if needed, and conservatively — CMA size is drawn from the same ~352MB pool
+available to Linux after `gpu_mem=128`.
