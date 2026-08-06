@@ -455,7 +455,7 @@ verify_packages() {
 
     # Verify picamera2 (apt-installed, visible via --system-site-packages)
     log "INFO" "Checking picamera2..."
-    if sudo -u "$ACTUAL_USER" bash -c "source '$VENV_DIR/bin/activate' && python3 -c 'import picamera2; from importlib.metadata import version; print("picamera2 version:", version("picamera2"))'" 2>&1 | tee -a "$LOG_FILE"; then
+    if sudo -u "$ACTUAL_USER" bash -c "source '$VENV_DIR/bin/activate' && python3 -c 'import picamera2; from importlib.metadata import version; print(\"picamera2 version:\", version(\"picamera2\"))'" 2>&1 | tee -a "$LOG_FILE"; then
         log "INFO" "picamera2 verified"
     else
         log "ERROR" "picamera2 not importable — ensure python3-picamera2 is installed and venv uses --system-site-packages"
