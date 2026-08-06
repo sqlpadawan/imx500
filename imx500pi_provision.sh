@@ -164,19 +164,19 @@ add_or_update_config() {
     local value="$2"
     local entry="${key}=${value}"
 
-    # Validate key format
     if ! [[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
         log "WARN" "Invalid config key format: $key"
         return 1
     fi
 
-    # Check if key exists (uncommented)
-    if grep -q "^${key}=" "$CONFIG_FILE"; then
-        # Update existing entry
-        sed -i "s|^${key}=.*|${entry}|" "$CONFIG_FILE"
-        log "INFO" "Updated: $entry"
+    local match_count
+    match_count=$(grep -c "^${key}=" "$CONFIG_FILE" || true)
+
+    if [[ "$match_count" -gt 0 ]]; then
+        sed -i "/^${key}=/d" "$CONFIG_FILE"
+        echo "$entry" >> "$CONFIG_FILE"
+        log "INFO" "Replaced ${match_count} existing '${key}=' entry(ies) with: $entry"
     else
-        # Add new entry
         echo "$entry" >> "$CONFIG_FILE"
         log "INFO" "Added: $entry"
     fi
