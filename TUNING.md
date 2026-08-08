@@ -214,27 +214,75 @@ object whose track briefly flickered — lost for a frame or two (e.g. a
 missed detection, momentary occlusion) and then re-promoted as a new
 synthetic track ID — without treating it as a second, distinct object.
 
-This is *not* a blanket per-label throttle. Two genuinely different vehicles
-of the same label passing through different parts of the frame within the
-same 10-second window will each still log their own `enter`/`exit` pair,
-since they won't be spatially close to a recent exit. (Earlier versions of
-this project used a simpler global per-label cooldown, which had the side
-effect of dropping the second vehicle's `enter` event entirely in that case
-— fixed as of the track-position-aware version.)
+This is intended to *not* be a blanket per-label throttle — it's meant to
+suppress only when the new track is spatially close to where something of
+the same label just exited. In practice, though, real logs have shown this
+distinction isn't reliable yet: two genuinely distinct objects of the same
+label passing through the same part of frame within a few seconds of each
+other (e.g. two pedestrians walking a few feet apart, cars queued at a stop)
+can also fall within `MAX_DIST` of the recent exit and get incorrectly
+merged — their `enter` gets silently suppressed even though the object is
+different. (Earlier versions of this project used a simpler global per-label
+cooldown, which had the more severe version of this problem — dropping a
+second vehicle's `enter` regardless of position. The position check narrowed
+the problem but did not eliminate it.)
 
 `10` seconds is appropriate for a residential street where vehicles pass
 through the frame in 3–10 seconds. For a wider scene where vehicles may be
 visible for longer, increase this. Note that the exit-matching radius is
 currently reused from `MAX_DIST`, which was originally tuned for
 frame-to-frame movement rather than "is this the same spot a vehicle exited
-from a few seconds ago" — if you see flickered tracks slipping through as
-duplicate `enter` events, or conversely two genuinely distinct vehicles
-being incorrectly merged, consider giving this its own dedicated radius
-constant instead of sharing `MAX_DIST`.
+from a few seconds ago" — see the tuning workflow below, which is actively
+in progress as of this writing.
 
 Since this changes what counts as a duplicate, treat it like any other
 tracking parameter change: adjust one variable, review `events.jsonl` for a
 day or two, then move on to the next change.
+
+#### Diagnosing and tuning the cooldown radius (in progress)
+
+A dedicated instrumentation pass is underway to size `COOLDOWN_S` and a
+future `EXIT_COOLDOWN_DIST` (a radius separate from `MAX_DIST`, specifically
+for the flicker-suppression check) from real data instead of guessing.
+
+**Known side effect while this is unresolved:** a suppressed `enter` still
+leaves its track alive in `_tracked`, so that track goes on to log a normal
+`exit` later — with no matching `enter` in the log. If you're spot-checking
+`events.jsonl` and see an `exit` whose `track_key` never appeared on an
+`enter`, this is why. It doesn't affect `build_summary.py` (which only
+counts `enter` events), but it does mean **`enter` and `exit` counts will
+not balance** for as long as this is unresolved — that's expected, not a
+sign of a new bug, until the log-consistency fix below lands.
+
+**Instrumentation:** every suppressed `enter` is now logged to a separate
+file, `/var/log/imx500/suppression_debug.jsonl` — deliberately *not* mixed
+into `events.jsonl`, so it doesn't affect `build_summary.py` or any
+downstream tooling. Each line records:
+
+| Field | Description |
+|---|---|
+| `ts` | Timestamp of the suppression decision |
+| `label` | Normalized label |
+| `distance_px` | Distance from the new detection to the matched recent exit |
+| `time_gap_s` | Seconds since that exit |
+| `prior_dwell_s` | How long the *earlier* track was confirmed before it exited |
+
+**Workflow:**
+
+1. Let the current values (`MAX_DIST=160`, `COOLDOWN_S=10`) run for a day or
+   two with instrumentation active — no behavior change yet.
+2. Review `suppression_debug.jsonl`. Genuine flicker (a track briefly lost
+   and re-promoted) should show small `distance_px` and a short
+   `prior_dwell_s` (real data so far: ~20–30px, ~0.3–0.9s). Cases likely to
+   be distinct objects should show larger distance, a longer time gap, or a
+   longer `prior_dwell_s` on the object that got suppressed.
+3. Pick a dedicated `EXIT_COOLDOWN_DIST` (and possibly a shorter
+   `COOLDOWN_S`) from the observed split, rather than reusing `MAX_DIST`.
+4. Re-run the standard enter/exit diagnostic (see below) to confirm the
+   counts move closer to balance without losing genuine flicker suppression.
+5. Once thresholds are set, apply the log-consistency fix (suppressed tracks
+   skip their eventual `exit` log too) and update this section to record the
+   final values and remove the "in progress" framing.
 
 ---
 
@@ -277,13 +325,15 @@ Each line in `events.jsonl` is a JSON record with the following fields:
 
 Because `track_key` is assigned once per confirmed track and each track logs exactly one `enter`, downstream counting (`build_summary.py`) can simply count `enter` events directly — no additional deduplication is needed. This wasn't always true; see the note below.
 
+**Note:** while the cooldown-radius tuning work described under Layer 5 (`COOLDOWN_S`) is in progress, `enter` and `exit` counts in `events.jsonl` will not fully balance — some `exit` events reference a `track_key` that never got an `enter` logged, because that `enter` was suppressed but the track itself lived on to exit normally. Suppression decisions themselves are logged separately to `/var/log/imx500/suppression_debug.jsonl`, not to `events.jsonl` — see Layer 5 for details.
+
 ### Note: `reprocess_summary.py` is legacy
 
 `reprocess_summary.py` predates the `track_key`-based tracker documented above. It was written to work around an earlier bug where a bucket divisor of 6px caused a single vehicle to generate many separate `enter` events as its bbox origin drifted — it clusters raw `enter` events by bbox-origin proximity (`SPATIAL_THRESHOLD`) and a time window (`TIME_WINDOW_S`) to collapse duplicates before counting.
 
 That bug no longer exists. The current tracker (Layer 5) assigns one `track_key` per confirmed track and logs exactly one `enter` per track, so logs written by the current code need no post-hoc deduplication — `build_summary.py` counting raw `enter` events directly is already correct.
 
-`reprocess_summary.py` is kept in the repo only for reprocessing old logs captured before this fix. It should **not** be run against current-format logs: its bbox-origin clustering has no awareness of `track_key` and could incorrectly merge two distinct objects of the same label that happen to pass through close positions within its 15-second window.
+`reprocess_summary.py` is kept in the repo only for reprocessing old logs captured before this fix. It should **not** be run against current-format logs: its bbox-origin clustering has no awareness of `track_key` and could incorrectly merge two distinct objects of the same label that happen to pass through close positions within its 15-second window. This is a one-time historical tool, not part of the daily processing pipeline (`build_summary.py` is), so no code change was made to it — this note is the resolution.
 
 ---
 
