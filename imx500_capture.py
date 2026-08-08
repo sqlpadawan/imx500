@@ -64,6 +64,28 @@ _log_handler = TimedRotatingFileHandler(
 _log_handler.suffix = "%Y-%m-%d"
 _event_logger.addHandler(_log_handler)
 
+# ── Suppression diagnostics (separate stream, NOT read by build_summary.py) ──
+# Temporary instrumentation for tuning COOLDOWN_S / the exit-cooldown radius.
+# Records every "enter" that gets suppressed by the flicker-cooldown check,
+# along with how far and how long ago the matched recent exit was, plus that
+# prior track's dwell_s. Goal: gather real distance/time data to size a
+# dedicated cooldown radius (separate from MAX_DIST) instead of guessing.
+# Safe to remove once tuning is complete.
+_suppression_logger = logging.getLogger("imx500.suppression")
+_suppression_logger.setLevel(logging.INFO)
+_suppression_logger.propagate = False
+
+_suppression_handler = TimedRotatingFileHandler(
+    filename    = LOG_DIR / "suppression_debug.jsonl",
+    when        = "midnight",
+    interval    = 1,
+    backupCount = MAX_LOG_FILES,
+    encoding    = "utf-8",
+    utc         = False,
+)
+_suppression_handler.suffix = "%Y-%m-%d"
+_suppression_logger.addHandler(_suppression_handler)
+
 # ── Detection tracking state ──────────────────────────────────────────────────
 # Proximity-based tracker: each object gets a UUID that persists as it moves
 # across the frame, regardless of label flips between frames.
@@ -109,9 +131,10 @@ LABEL_NORMALIZE: dict[str, str] = {
 # _pending: temp_id  → {label, conf, cx, cy, bbox, count}
 _tracked:      dict = {}
 _pending:      dict = {}
-# _recent_exits: [(label, cx, cy, exit_time), ...] — recently-exited tracks,
-# used to suppress a re-"enter" from the same flickering object (see
-# COOLDOWN_S above). Pruned in _log_event() on every "enter" check.
+# _recent_exits: [(label, cx, cy, exit_time, dwell_s), ...] — recently-exited
+# tracks, used to suppress a re-"enter" from the same flickering object (see
+# COOLDOWN_S above). Pruned in _log_event() on every "enter" check. dwell_s
+# is carried along purely for suppression diagnostics (see _suppression_logger).
 _recent_exits: list = []
 _tracked_lock        = threading.Lock()
 
@@ -167,12 +190,22 @@ def _log_event(event: str, label: str, confidence: float,
         # AND near this position — i.e. likely the same physical object
         # whose track flickered, not a distinct object of the same label.
         if cx is not None and cy is not None:
-            for ex_label, ex_cx, ex_cy, _ in _recent_exits:
-                if ex_label == label and _center_dist(cx, cy, ex_cx, ex_cy) < MAX_DIST:
+            for ex_label, ex_cx, ex_cy, ex_time, ex_dwell in _recent_exits:
+                if ex_label != label:
+                    continue
+                dist = _center_dist(cx, cy, ex_cx, ex_cy)
+                if dist < MAX_DIST:
+                    _suppression_logger.info(json.dumps({
+                        "ts":            datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                        "label":         label,
+                        "distance_px":   round(dist, 1),
+                        "time_gap_s":    round(now - ex_time, 2),
+                        "prior_dwell_s": round(ex_dwell, 1) if ex_dwell is not None else None,
+                    }))
                     return
 
     if event == "exit" and cx is not None and cy is not None:
-        _recent_exits.append((label, cx, cy, now))
+        _recent_exits.append((label, cx, cy, now, dwell_s))
 
     record = {
         "ts":         datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
