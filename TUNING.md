@@ -261,6 +261,32 @@ imx500 restart imx500_capture.service
 
 ---
 
+## Event Log Schema
+
+Each line in `events.jsonl` is a JSON record with the following fields:
+
+| Field | Present on | Description |
+|---|---|---|
+| `ts` | all | ISO-8601 UTC timestamp, millisecond precision |
+| `event` | all | `"enter"` or `"exit"` |
+| `label` | all | Normalized label (see Layer 3) |
+| `confidence` | all | Detection confidence at time of event (0–1) |
+| `bbox` | all | `[x, y, w, h]` at time of event |
+| `track_key` | all | 8-character UUID identifying the track. Generated once when a pending candidate is promoted to a confirmed track (see Layer 5, `MIN_CONSECUTIVE`), and reused on the corresponding `exit`. One `enter`/`exit` pair per `track_key` — track identity is proximity-based, not label-based, so a car/truck label flip on the same physical object keeps the same `track_key`. |
+| `dwell_s` | `exit` only | Seconds the track was confirmed, from promotion to exit |
+
+Because `track_key` is assigned once per confirmed track and each track logs exactly one `enter`, downstream counting (`build_summary.py`) can simply count `enter` events directly — no additional deduplication is needed. This wasn't always true; see the note below.
+
+### Note: `reprocess_summary.py` is legacy
+
+`reprocess_summary.py` predates the `track_key`-based tracker documented above. It was written to work around an earlier bug where a bucket divisor of 6px caused a single vehicle to generate many separate `enter` events as its bbox origin drifted — it clusters raw `enter` events by bbox-origin proximity (`SPATIAL_THRESHOLD`) and a time window (`TIME_WINDOW_S`) to collapse duplicates before counting.
+
+That bug no longer exists. The current tracker (Layer 5) assigns one `track_key` per confirmed track and logs exactly one `enter` per track, so logs written by the current code need no post-hoc deduplication — `build_summary.py` counting raw `enter` events directly is already correct.
+
+`reprocess_summary.py` is kept in the repo only for reprocessing old logs captured before this fix. It should **not** be run against current-format logs: its bbox-origin clustering has no awareness of `track_key` and could incorrectly merge two distinct objects of the same label that happen to pass through close positions within its 15-second window.
+
+---
+
 ## Recommended Tuning Workflow
 
 1. Run the system for a full day with the current settings.
