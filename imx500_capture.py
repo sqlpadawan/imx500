@@ -118,7 +118,25 @@ MAX_DIST          = 160   # px
 MIN_CONSECUTIVE   = 2
 MAX_MISSED        = 8     # frames grace for occlusion / model miss
 COOLDOWN_S        = 10
-SUPPRESSED_LABELS = {"airplane", "boat", "sheep", "umbrella", "keyboard", "train"}
+
+# Per-label override for the flicker-suppression cooldown window (see
+# COOLDOWN_S above). Falls back to COOLDOWN_S for any label not listed here.
+#
+# Derived from a full day of suppression_debug.jsonl (2026-08-09): person
+# suppressions showed a clean split by TIME rather than distance — cases
+# with time_gap_s < ~0.4s were tightly clustered in distance (5-33px,
+# consistent with genuine single-frame flicker), while anything beyond
+# ~0.4s scattered across the full 17-158px range with no coherent
+# single-object narrative — consistent with distinct pedestrians rather
+# than one flickering track. Vehicle showed the opposite shape (short gaps
+# had large scattered distances from bbox jitter on a real moving car;
+# longer gaps settled into small distances consistent with a legitimately
+# stopped/idling vehicle), so vehicle keeps the original 10s window rather
+# than being tightened. See TUNING.md, Layer 5, for the full analysis.
+COOLDOWN_S_BY_LABEL = {
+    "person": 0.5,
+}
+SUPPRESSED_LABELS = {"airplane", "boat", "sheep", "umbrella", "keyboard", "train", "cow"}
 
 # Labels collapsed to a single normalized name.
 # Extend this dict for any other pairs the model confuses on your scene.
@@ -183,15 +201,21 @@ def _log_event(event: str, label: str, confidence: float,
     now = time.monotonic()
 
     if event == "enter":
-        # Prune stale entries first.
+        # Prune stale entries first. Uses the global COOLDOWN_S as the outer
+        # bound so no label's data is discarded prematurely — the per-label
+        # window (COOLDOWN_S_BY_LABEL) is enforced again below, per candidate.
         _recent_exits[:] = [e for e in _recent_exits if now - e[3] < COOLDOWN_S]
 
         # Suppress this "enter" only if a same-label track exited recently
-        # AND near this position — i.e. likely the same physical object
-        # whose track flickered, not a distinct object of the same label.
+        # (within that label's cooldown window) AND near this position —
+        # i.e. likely the same physical object whose track flickered, not a
+        # distinct object of the same label.
         if cx is not None and cy is not None:
+            label_cooldown_s = COOLDOWN_S_BY_LABEL.get(label, COOLDOWN_S)
             for ex_label, ex_cx, ex_cy, ex_time, ex_dwell in _recent_exits:
                 if ex_label != label:
+                    continue
+                if now - ex_time >= label_cooldown_s:
                     continue
                 dist = _center_dist(cx, cy, ex_cx, ex_cy)
                 if dist < MAX_DIST:

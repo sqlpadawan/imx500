@@ -81,7 +81,7 @@ ever test outside the service, since the untuned default will apply.
 **Where:** `imx500_capture.py`, module-level constant
 
 ```python
-SUPPRESSED_LABELS = {"airplane", "boat", "sheep", "umbrella", "keyboard", "train"}
+SUPPRESSED_LABELS = {"airplane", "boat", "sheep", "umbrella", "keyboard", "train", "cow"}
 ```
 
 **What it does:** Any detection matching a label in this set is silently
@@ -104,7 +104,9 @@ your scene.
   is being suppressed, the underlying cause is usually a threshold that is
   too low.
 
-**Current suppressed labels:** airplane, boat, sheep, umbrella, keyboard, train
+**Current suppressed labels:** airplane, boat, sheep, umbrella, keyboard, train, cow
+
+`cow` was added 2026-08-09: 3 occurrences over a full day, all at confidence 0.438 (the established noise floor), all during evening/night hours, with bbox dimensions similar to vehicle detections — consistent with nighttime vehicle shapes being misclassified, the same pattern that put the other entries on this list.
 
 ---
 
@@ -207,57 +209,43 @@ increase this value.
 
 ### COOLDOWN_S
 When a track is confirmed and about to log an `enter` event, this checks
-whether a track of the **same label** exited within the last `COOLDOWN_S`
-seconds **and** within `MAX_DIST` pixels of the new detection's position. If
+whether a track of the **same label** exited within that label's cooldown
+window **and** within `MAX_DIST` pixels of the new detection's position. If
 so, the `enter` is suppressed. This is meant to catch a single physical
 object whose track briefly flickered — lost for a frame or two (e.g. a
 missed detection, momentary occlusion) and then re-promoted as a new
 synthetic track ID — without treating it as a second, distinct object.
 
-This is intended to *not* be a blanket per-label throttle — it's meant to
-suppress only when the new track is spatially close to where something of
-the same label just exited. In practice, though, real logs have shown this
-distinction isn't reliable yet: two genuinely distinct objects of the same
-label passing through the same part of frame within a few seconds of each
-other (e.g. two pedestrians walking a few feet apart, cars queued at a stop)
-can also fall within `MAX_DIST` of the recent exit and get incorrectly
-merged — their `enter` gets silently suppressed even though the object is
-different. (Earlier versions of this project used a simpler global per-label
-cooldown, which had the more severe version of this problem — dropping a
-second vehicle's `enter` regardless of position. The position check narrowed
-the problem but did not eliminate it.)
+As of 2026-08-09, this is **per-label**, not a single global value:
 
-`10` seconds is appropriate for a residential street where vehicles pass
-through the frame in 3–10 seconds. For a wider scene where vehicles may be
-visible for longer, increase this. Note that the exit-matching radius is
-currently reused from `MAX_DIST`, which was originally tuned for
-frame-to-frame movement rather than "is this the same spot a vehicle exited
-from a few seconds ago" — see the tuning workflow below, which is actively
-in progress as of this writing.
+```python
+COOLDOWN_S          = 10          # default / vehicle
+COOLDOWN_S_BY_LABEL = {
+    "person": 0.5,
+}
+```
+
+`10` seconds remains the value for `vehicle` (and anything not otherwise
+listed). `person` was tightened to `0.5` seconds. Both values, and the
+decision to split them by label at all, came from a full day of
+`suppression_debug.jsonl` — see below for the analysis and how to redo it.
+
+Earlier versions of this project used a simpler global per-label cooldown
+(no position check at all), which had a more severe version of this same
+problem — dropping a second vehicle's `enter` regardless of position. Adding
+the `MAX_DIST` position check narrowed the problem but, as the analysis
+below shows, did not eliminate it for every label.
 
 Since this changes what counts as a duplicate, treat it like any other
 tracking parameter change: adjust one variable, review `events.jsonl` for a
 day or two, then move on to the next change.
 
-#### Diagnosing and tuning the cooldown radius (in progress)
+#### Diagnosing and tuning the cooldown window (resolved 2026-08-09)
 
-A dedicated instrumentation pass is underway to size `COOLDOWN_S` and a
-future `EXIT_COOLDOWN_DIST` (a radius separate from `MAX_DIST`, specifically
-for the flicker-suppression check) from real data instead of guessing.
-
-**Known side effect while this is unresolved:** a suppressed `enter` still
-leaves its track alive in `_tracked`, so that track goes on to log a normal
-`exit` later — with no matching `enter` in the log. If you're spot-checking
-`events.jsonl` and see an `exit` whose `track_key` never appeared on an
-`enter`, this is why. It doesn't affect `build_summary.py` (which only
-counts `enter` events), but it does mean **`enter` and `exit` counts will
-not balance** for as long as this is unresolved — that's expected, not a
-sign of a new bug, until the log-consistency fix below lands.
-
-**Instrumentation:** every suppressed `enter` is now logged to a separate
-file, `/var/log/imx500/suppression_debug.jsonl` — deliberately *not* mixed
-into `events.jsonl`, so it doesn't affect `build_summary.py` or any
-downstream tooling. Each line records:
+**Instrumentation:** every suppressed `enter` is logged to a separate file,
+`/var/log/imx500/suppression_debug.jsonl` — deliberately *not* mixed into
+`events.jsonl`, so it doesn't affect `build_summary.py` or any downstream
+tooling. Each line records:
 
 | Field | Description |
 |---|---|
@@ -267,22 +255,62 @@ downstream tooling. Each line records:
 | `time_gap_s` | Seconds since that exit |
 | `prior_dwell_s` | How long the *earlier* track was confirmed before it exited |
 
-**Workflow:**
+**Known side effect:** a suppressed `enter` still leaves its track alive in
+`_tracked`, so that track goes on to log a normal `exit` later — with no
+matching `enter` in the log. If you're spot-checking `events.jsonl` and see
+an `exit` whose `track_key` never appeared on an `enter`, this is why. It
+doesn't affect `build_summary.py` (which only counts `enter` events), but
+`enter` and `exit` counts will not fully balance as a result. This is a
+known, currently-accepted side effect of the suppression design, not a bug
+in the log — it hasn't been changed since it doesn't affect the summary
+dashboard, and revisiting it (skipping the exit log for a suppressed track)
+is a separate, small change if it's ever needed.
 
-1. Let the current values (`MAX_DIST=160`, `COOLDOWN_S=10`) run for a day or
-   two with instrumentation active — no behavior change yet.
-2. Review `suppression_debug.jsonl`. Genuine flicker (a track briefly lost
-   and re-promoted) should show small `distance_px` and a short
-   `prior_dwell_s` (real data so far: ~20–30px, ~0.3–0.9s). Cases likely to
-   be distinct objects should show larger distance, a longer time gap, or a
-   longer `prior_dwell_s` on the object that got suppressed.
-3. Pick a dedicated `EXIT_COOLDOWN_DIST` (and possibly a shorter
-   `COOLDOWN_S`) from the observed split, rather than reusing `MAX_DIST`.
-4. Re-run the standard enter/exit diagnostic (see below) to confirm the
-   counts move closer to balance without losing genuine flicker suppression.
-5. Once thresholds are set, apply the log-consistency fix (suppressed tracks
-   skip their eventual `exit` log too) and update this section to record the
-   final values and remove the "in progress" framing.
+**What a partial day (2026-08-08 evening only) initially suggested:**
+distance and prior dwell looked plausible as separators, with a hand-picked
+example showing tight distance (~20-30px) and short prior dwell (~0.3-0.9s)
+for what looked like genuine flicker. That didn't hold up against more data.
+
+**What a full day (2026-08-09, 120 suppression events) actually showed:**
+`distance_px` alone spread continuously from ~1px to ~159px for both labels
+— no clean gap to threshold on. Splitting suppressions into a strict
+"tight flicker" bucket (`distance_px < 30` and `time_gap_s < 1.5`) found
+only 10-17% of events qualified for either label, but a more targeted check
+— `distance_px > 50` **and** `time_gap_s > 2` (the profile most likely to
+be a genuinely distinct object rather than one flickering track) — showed
+a sharp asymmetry:
+
+| Label | Total suppressed | Likely-distinct-object profile |
+|---|---|---|
+| vehicle | 62 | 1 (2%) |
+| person | 58 | 26 (45%) |
+
+Sorting each label's events by `time_gap_s` (rather than `distance_px`)
+explained why. **Person** showed a genuinely clean split: below a ~0.4s
+gap, `distance_px` stayed tightly bounded (5-33px, physically consistent
+with a single-frame miss); the moment the gap crossed ~0.4s, distance
+scattered across the full range with no coherent single-object pattern —
+consistent with a second, distinct pedestrian. **Vehicle** showed the
+*opposite* shape: short gaps (<1.2s) had large, scattered distances (up to
+~140px, consistent with bbox-position jitter on a real moving car, not
+actual teleportation), while longer gaps (2-9s) consistently settled into
+small distances (mostly <35px) — consistent with a vehicle that
+legitimately stopped or idled and briefly dropped out of detection. A
+single distance or time cutoff shared across labels can't fit both shapes
+at once, which is why this became a per-label `COOLDOWN_S` change rather
+than a shared `EXIT_COOLDOWN_DIST`. `MAX_DIST` (the distance check) was
+left shared and unchanged — for `person`, the short 0.5s window already
+does the real filtering, since a pedestrian can't move far in half a
+second regardless of position.
+
+**To redo this analysis** (e.g. after further changes, or to sanity-check
+the current values): pull `suppression_debug.jsonl`, split by label, and
+sort each label's events by `time_gap_s` — look for the point at which
+`distance_px` stops being tightly bounded and starts scattering. That point
+is a reasonable candidate for that label's `COOLDOWN_S`. Confirm afterward
+with the standard enter/exit balance check from the diagnostic query above
+— `person` enter/exit counts moving closer together, without vehicle
+regressing, is the signal the change worked as intended.
 
 ---
 
@@ -325,7 +353,7 @@ Each line in `events.jsonl` is a JSON record with the following fields:
 
 Because `track_key` is assigned once per confirmed track and each track logs exactly one `enter`, downstream counting (`build_summary.py`) can simply count `enter` events directly — no additional deduplication is needed. This wasn't always true; see the note below.
 
-**Note:** while the cooldown-radius tuning work described under Layer 5 (`COOLDOWN_S`) is in progress, `enter` and `exit` counts in `events.jsonl` will not fully balance — some `exit` events reference a `track_key` that never got an `enter` logged, because that `enter` was suppressed but the track itself lived on to exit normally. Suppression decisions themselves are logged separately to `/var/log/imx500/suppression_debug.jsonl`, not to `events.jsonl` — see Layer 5 for details.
+**Note:** `enter` and `exit` counts in `events.jsonl` will not fully balance — some `exit` events reference a `track_key` that never got an `enter` logged, because that `enter` was suppressed by the cooldown check but the track itself lived on to exit normally. This is a known, accepted side effect of the suppression design (see Layer 5, `COOLDOWN_S`), not a bug — it doesn't affect `build_summary.py`, which only counts `enter` events. Suppression decisions themselves are logged separately to `/var/log/imx500/suppression_debug.jsonl`, not to `events.jsonl` — see Layer 5 for details.
 
 ### Note: `reprocess_summary.py` is legacy
 
