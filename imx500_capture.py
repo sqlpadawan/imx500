@@ -136,6 +136,24 @@ COOLDOWN_S        = 10
 COOLDOWN_S_BY_LABEL = {
     "person": 0.5,
 }
+
+# Per-label override for the flicker-suppression matching distance (see
+# MAX_DIST above, which remains the default / vehicle value). Falls back to
+# MAX_DIST for any label not listed here.
+#
+# Derived from 70 pooled person suppressions across three separate days
+# (2026-08-11, -14, -15), after the COOLDOWN_S_BY_LABEL change above was
+# already deployed: even within the tight 0.5s person cooldown window, a
+# small residual (~15-16% consistently across all three days) still showed
+# implausibly large distance jumps for a walking pace — i.e. two distinct
+# people whose events coincidentally landed within the same fraction of a
+# second. Sorting all 70 records by distance showed a clean, reproducible
+# gap: the tight cluster topped out at 43.3px, then jumped straight to
+# 72.2px with nothing in between. 50px sits in that gap — above the clean
+# cluster's ceiling, below the suspect group's floor.
+EXIT_COOLDOWN_DIST_BY_LABEL = {
+    "person": 50,
+}
 SUPPRESSED_LABELS = {"airplane", "boat", "sheep", "umbrella", "keyboard", "train", "cow"}
 
 # Labels collapsed to a single normalized name.
@@ -207,18 +225,20 @@ def _log_event(event: str, label: str, confidence: float,
         _recent_exits[:] = [e for e in _recent_exits if now - e[3] < COOLDOWN_S]
 
         # Suppress this "enter" only if a same-label track exited recently
-        # (within that label's cooldown window) AND near this position —
-        # i.e. likely the same physical object whose track flickered, not a
-        # distinct object of the same label.
+        # (within that label's cooldown window) AND near this position
+        # (within that label's cooldown distance) — i.e. likely the same
+        # physical object whose track flickered, not a distinct object of
+        # the same label.
         if cx is not None and cy is not None:
-            label_cooldown_s = COOLDOWN_S_BY_LABEL.get(label, COOLDOWN_S)
+            label_cooldown_s    = COOLDOWN_S_BY_LABEL.get(label, COOLDOWN_S)
+            label_cooldown_dist = EXIT_COOLDOWN_DIST_BY_LABEL.get(label, MAX_DIST)
             for ex_label, ex_cx, ex_cy, ex_time, ex_dwell in _recent_exits:
                 if ex_label != label:
                     continue
                 if now - ex_time >= label_cooldown_s:
                     continue
                 dist = _center_dist(cx, cy, ex_cx, ex_cy)
-                if dist < MAX_DIST:
+                if dist < label_cooldown_dist:
                     _suppression_logger.info(json.dumps({
                         "ts":            datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                         "label":         label,

@@ -210,25 +210,31 @@ increase this value.
 ### COOLDOWN_S
 When a track is confirmed and about to log an `enter` event, this checks
 whether a track of the **same label** exited within that label's cooldown
-window **and** within `MAX_DIST` pixels of the new detection's position. If
-so, the `enter` is suppressed. This is meant to catch a single physical
-object whose track briefly flickered — lost for a frame or two (e.g. a
-missed detection, momentary occlusion) and then re-promoted as a new
+window **and** within that label's cooldown distance of the new detection's
+position. If so, the `enter` is suppressed. This is meant to catch a single
+physical object whose track briefly flickered — lost for a frame or two
+(e.g. a missed detection, momentary occlusion) and then re-promoted as a new
 synthetic track ID — without treating it as a second, distinct object.
 
-As of 2026-08-09, this is **per-label**, not a single global value:
+As of 2026-08-15, both the time window **and** the matching distance are
+**per-label**, not single global values:
 
 ```python
-COOLDOWN_S          = 10          # default / vehicle
+MAX_DIST                    = 160         # default / vehicle distance
+COOLDOWN_S                  = 10          # default / vehicle window
 COOLDOWN_S_BY_LABEL = {
     "person": 0.5,
 }
+EXIT_COOLDOWN_DIST_BY_LABEL = {
+    "person": 50,
+}
 ```
 
-`10` seconds remains the value for `vehicle` (and anything not otherwise
-listed). `person` was tightened to `0.5` seconds. Both values, and the
-decision to split them by label at all, came from a full day of
-`suppression_debug.jsonl` — see below for the analysis and how to redo it.
+`vehicle` (and anything not otherwise listed) keeps the original `10`
+second / `160` pixel values. `person` was tightened in two stages —
+first the cooldown window (2026-08-09), then the matching distance
+(2026-08-15) once enough data existed to justify it. See below for the
+analysis behind each and how to redo it.
 
 Earlier versions of this project used a simpler global per-label cooldown
 (no position check at all), which had a more severe version of this same
@@ -298,10 +304,8 @@ small distances (mostly <35px) — consistent with a vehicle that
 legitimately stopped or idled and briefly dropped out of detection. A
 single distance or time cutoff shared across labels can't fit both shapes
 at once, which is why this became a per-label `COOLDOWN_S` change rather
-than a shared `EXIT_COOLDOWN_DIST`. `MAX_DIST` (the distance check) was
-left shared and unchanged — for `person`, the short 0.5s window already
-does the real filtering, since a pedestrian can't move far in half a
-second regardless of position.
+than a shared distance change at the time. The distance side was revisited
+once more data existed — see the addendum below.
 
 **To redo this analysis** (e.g. after further changes, or to sanity-check
 the current values): pull `suppression_debug.jsonl`, split by label, and
@@ -311,6 +315,41 @@ is a reasonable candidate for that label's `COOLDOWN_S`. Confirm afterward
 with the standard enter/exit balance check from the diagnostic query above
 — `person` enter/exit counts moving closer together, without vehicle
 regressing, is the signal the change worked as intended.
+
+#### Addendum: adding a distance cap for `person` (resolved 2026-08-15)
+
+The 2026-08-09 change fixed most of the problem — person suppression rate
+dropped from 73% to roughly 20-30% and held steady there over the following
+days. But a residual pattern persisted: **consistently across three
+separate days (2026-08-11, -14, -15), about 15-16% of person suppressions
+still had implausibly large distances** (72-158px) despite passing the
+tight 0.5s time window. A person can't walk that far in a fraction of a
+second — these are almost certainly two distinct people whose events
+happened to land within the same fraction of a second by coincidence (e.g.
+people walking together, one's track exiting right as the other's
+promotes), not one flickering track.
+
+Because this pattern reproduced at nearly the same rate on three
+independent days, it was trusted as real rather than day-to-day noise.
+Pooling all 70 person suppression records across those three days and
+sorting by distance showed a clean, reproducible gap: the tight cluster
+topped out at 43.3px, then jumped straight to 72.2px with nothing in
+between. `EXIT_COOLDOWN_DIST_BY_LABEL["person"] = 50` was set in that gap —
+above the clean cluster's ceiling, below the suspect group's floor.
+
+This is a smaller, second-order refinement on top of the 2026-08-09 fix,
+not a replacement for it — both `COOLDOWN_S_BY_LABEL` and
+`EXIT_COOLDOWN_DIST_BY_LABEL` are active for `person` simultaneously; an
+`enter` is only suppressed if it's both within the time window *and* within
+the distance cap. `vehicle` is unaffected by this addendum and continues to
+use the shared `MAX_DIST=160` / `COOLDOWN_S=10` defaults, which the earlier
+analysis showed fit its (opposite) short-gap/large-distance,
+long-gap/small-distance pattern.
+
+**Next check:** re-run the `suppression_debug.jsonl` analysis after this
+deploys — the ~15-16% suspect rate for `person` should drop close to zero,
+since those are exactly the cases the new distance cap now excludes from
+suppression (they'll show up as real, distinct `enter` events instead).
 
 ---
 
