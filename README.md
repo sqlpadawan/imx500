@@ -11,6 +11,8 @@ available 24/7.
 **Stack:** Python · picamera2 · OpenCV · websockets · systemd
 
 ---
+<img width="857" height="910" alt="Screenshot 2026-08-27 075633" src="https://github.com/user-attachments/assets/d56db6fc-959a-43d7-9938-d220c0bde41b" />
+---
 
 ## Requirements
 
